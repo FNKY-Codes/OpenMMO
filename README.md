@@ -40,7 +40,7 @@ crates/
 content/      YAML game data (items, NPCs, maps, quests)
 tools/        Content validator, atlas packer
 deploy/       Docker Compose and SQL migrations
-docs/         Architecture and self-hosting guides
+docs/         Architecture, roadmap, and self-hosting guides
 ```
 
 ## Skills (Original Taxonomy)
