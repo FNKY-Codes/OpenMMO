@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,20 +15,65 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use openmmo_common::PlayerId;
 use openmmo_protocol::{decode_client, encode_server, ClientMessage, ServerMessage};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{mpsc, RwLock};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
 use crate::content::{default_content_path, load_content_dir};
 use crate::economy::assign_ledger_contract;
+use crate::persistence;
 use crate::quest::quest_journal;
 use crate::state::{GameWorld, SharedWorld};
-use crate::tick::{handle_client_message, inventory_update, process_tick, snapshot_message};
+use crate::tick::{handle_client_message, inventory_update, process_tick, snapshot_message, MessageTarget};
 
 pub struct AppState {
     pub world: SharedWorld,
-    pub broadcast: broadcast::Sender<String>,
+    pub player_senders: Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<String>>>>,
+    pub broadcast_senders: Arc<RwLock<HashMap<u64, mpsc::UnboundedSender<String>>>>,
+    pub next_conn_id: Arc<RwLock<u64>>,
+}
+
+impl AppState {
+    pub async fn send_to_player(&self, player_id: PlayerId, msg: &ServerMessage) {
+        if let Ok(json) = encode_server(msg) {
+            if let Some(tx) = self.player_senders.read().await.get(&player_id) {
+                let _ = tx.send(json);
+            }
+        }
+    }
+
+    pub async fn broadcast(&self, msg: &ServerMessage) {
+        if let Ok(json) = encode_server(msg) {
+            for tx in self.broadcast_senders.read().await.values() {
+                let _ = tx.send(json.clone());
+            }
+        }
+    }
+
+    pub async fn register_connection(&self, tx: mpsc::UnboundedSender<String>) -> u64 {
+        let mut next = self.next_conn_id.write().await;
+        *next += 1;
+        let id = *next;
+        self.broadcast_senders.write().await.insert(id, tx);
+        id
+    }
+
+    pub async fn unregister_connection(&self, conn_id: u64) {
+        self.broadcast_senders.write().await.remove(&conn_id);
+    }
+
+    pub async fn register_player(
+        &self,
+        player_id: PlayerId,
+        tx: mpsc::UnboundedSender<String>,
+    ) {
+        self.player_senders.write().await.insert(player_id, tx);
+    }
+
+    pub async fn unregister_player(&self, player_id: PlayerId) {
+        self.player_senders.write().await.remove(&player_id);
+    }
 }
 
 pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
@@ -42,31 +88,43 @@ pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     );
 
     let world = Arc::new(RwLock::new(world));
-    let (broadcast, _) = broadcast::channel(1024);
-
+    crate::content::spawn_hot_reload_task(world.clone());
     let state = Arc::new(AppState {
         world: world.clone(),
-        broadcast,
+        player_senders: Arc::new(RwLock::new(HashMap::new())),
+        broadcast_senders: Arc::new(RwLock::new(HashMap::new())),
+        next_conn_id: Arc::new(RwLock::new(0)),
     });
 
     let tick_state = state.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(600));
+        let mut full_snapshot_counter = 0u64;
         loop {
             interval.tick().await;
-            let mut messages_to_send = Vec::new();
+            let mut tick_messages = Vec::new();
             {
                 let mut w = tick_state.world.write().await;
-                let tick_msgs = process_tick(&mut w);
-                messages_to_send.extend(tick_msgs);
-                let snapshot = snapshot_message(&w, None);
-                if let Ok(json) = encode_server(&snapshot) {
-                    let _ = tick_state.broadcast.send(json);
-                }
+                tick_messages = process_tick(&mut w);
+                full_snapshot_counter += 1;
+                let snapshot = if full_snapshot_counter % 50 == 0 {
+                    snapshot_message(&w, None)
+                } else {
+                    ServerMessage::StateDelta {
+                        tick: w.tick,
+                        entities: w.entities_snapshot(),
+                    }
+                };
+                tick_state.broadcast(&snapshot).await;
             }
-            for (_pid, msg) in messages_to_send {
-                if let Ok(json) = encode_server(&msg) {
-                    let _ = tick_state.broadcast.send(json);
+            for (target, msg) in tick_messages {
+                match target {
+                    MessageTarget::Player(pid) => {
+                        tick_state.send_to_player(pid, &msg).await;
+                    }
+                    MessageTarget::Broadcast => {
+                        tick_state.broadcast(&msg).await;
+                    }
                 }
             }
         }
@@ -105,25 +163,27 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) ->
 
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
-    let mut player_id: Option<PlayerId> = None;
-    let mut broadcast_rx = state.broadcast.subscribe();
+    let (conn_tx, mut conn_rx) = mpsc::unbounded_channel::<String>();
+    let conn_id = state.register_connection(conn_tx.clone()).await;
 
     let send_task = tokio::spawn(async move {
         loop {
             tokio::select! {
-                msg = broadcast_rx.recv() => {
+                msg = conn_rx.recv() => {
                     match msg {
-                        Ok(json) => {
+                        Some(json) => {
                             if sender.send(Message::Text(json)).await.is_err() {
                                 break;
                             }
                         }
-                        Err(_) => break,
+                        None => break,
                     }
                 }
             }
         }
     });
+
+    let mut player_id: Option<PlayerId> = None;
 
     while let Some(Ok(msg)) = receiver.next().await {
         let text = match msg {
@@ -142,56 +202,91 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
 
         match &client_msg {
             ClientMessage::Login {
-                username: _,
+                username,
                 character_name,
             } => {
                 let mut world = state.world.write().await;
-                let pid = world.add_player(character_name.clone());
-                let starter_items: Vec<_> = world
-                    .content
-                    .items
-                    .iter()
-                    .filter(|item| {
-                        item.name.contains("Bronze")
-                            || item.name.contains("Log")
-                            || item.name.contains("Timber")
-                    })
-                    .map(|item| (item.id, item.stackable))
-                    .collect();
-                if let Some(player) = world.players.get_mut(&pid) {
-                    for (id, stackable) in starter_items {
-                        let _ = player.inventory.add_item(id, 5, stackable);
+                if !crate::anticheat::validate_username(username) {
+                    drop(world);
+                    let login = ServerMessage::LoginResult {
+                        success: false,
+                        player_id: None,
+                        message: "Invalid username".into(),
+                    };
+                    if let Ok(json) = encode_server(&login) {
+                        let _ = conn_tx.send(json);
+                    }
+                    continue;
+                }
+                let pid = if let Ok(db_url) = std::env::var("DATABASE_URL") {
+                    persistence::load_or_create_player(&db_url, username, character_name, &mut world)
+                        .await
+                        .unwrap_or_else(|_| world.add_player(character_name.clone()))
+                } else {
+                    world.add_player(character_name.clone())
+                };
+                if world.players.get(&pid).is_some_and(|p| p.inventory.slots.iter().all(|s| s.is_none()))
+                {
+                    let starter_items: Vec<_> = world
+                        .content
+                        .items
+                        .iter()
+                        .filter(|item| {
+                            item.name.contains("Bronze")
+                                || item.name.contains("Log")
+                                || item.name.contains("Timber")
+                        })
+                        .map(|item| (item.id, item.stackable))
+                        .collect();
+                    if let Some(player) = world.players.get_mut(&pid) {
+                        for (id, stackable) in starter_items {
+                            let _ = player.inventory.add_item(id, 5, stackable);
+                        }
                     }
                 }
                 assign_ledger_contract(&mut world, pid);
                 let snapshot = snapshot_message(&world, Some(pid));
                 let journal = quest_journal(&world, pid);
+                let inv = world.players.get(&pid).map(inventory_update);
                 drop(world);
+
                 player_id = Some(pid);
-                let _ = state.broadcast.send(encode_server(&snapshot).unwrap());
+                state.register_player(pid, conn_tx.clone()).await;
+
+                if let Ok(json) = encode_server(&snapshot) {
+                    let _ = conn_tx.send(json);
+                }
+                if let Some(inv) = inv {
+                    if let Ok(json) = encode_server(&inv) {
+                        let _ = conn_tx.send(json);
+                    }
+                }
                 let login = ServerMessage::LoginResult {
                     success: true,
                     player_id: Some(pid),
                     message: "Welcome to OpenMMO".into(),
                 };
-                let inv = {
-                    let world = state.world.read().await;
-                    world.players.get(&pid).map(inventory_update)
-                };
-                if let Some(inv) = inv {
-                    let _ = state.broadcast.send(encode_server(&inv).unwrap());
+                if let Ok(json) = encode_server(&login) {
+                    let _ = conn_tx.send(json);
                 }
-                let _ = state.broadcast.send(encode_server(&login).unwrap());
-                let _ = journal;
+                let journal_msg = ServerMessage::QuestJournal { entries: journal };
+                if let Ok(json) = encode_server(&journal_msg) {
+                    let _ = conn_tx.send(json);
+                }
             }
             _ => {
                 if let Some(pid) = player_id {
                     let mut world = state.world.write().await;
                     let responses = handle_client_message(&mut world, pid, client_msg);
                     drop(world);
-                    for resp in responses {
-                        if let Ok(json) = encode_server(&resp) {
-                            let _ = state.broadcast.send(json);
+                    for (target, resp) in responses {
+                        match target {
+                            MessageTarget::Player(pid) => {
+                                state.send_to_player(pid, &resp).await;
+                            }
+                            MessageTarget::Broadcast => {
+                                state.broadcast(&resp).await;
+                            }
                         }
                     }
                 }
@@ -200,8 +295,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     }
 
     if let Some(pid) = player_id {
+        if let Ok(db_url) = std::env::var("DATABASE_URL") {
+            let world = state.world.read().await;
+            if let Some(player) = world.players.get(&pid) {
+                let _ = persistence::save_player(&db_url, player).await;
+            }
+        }
+        state.unregister_player(pid).await;
         let mut world = state.world.write().await;
         world.remove_player(pid);
     }
+    state.unregister_connection(conn_id).await;
     send_task.abort();
 }

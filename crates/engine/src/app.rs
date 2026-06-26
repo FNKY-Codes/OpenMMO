@@ -4,7 +4,7 @@ use egui_wgpu::wgpu;
 use egui_wgpu::Renderer as EguiRenderer;
 use egui_winit::winit;
 use egui_winit::State as EguiWinitState;
-use openmmo_common::{RegionDef, WorldEntity};
+use openmmo_common::{EntityKind, RegionDef, WorldEntity};
 use openmmo_protocol::{ClientMessage, ServerMessage};
 
 use egui_winit::egui;
@@ -205,25 +205,43 @@ impl EngineApp {
                 local_player,
                 ..
             } => {
-                self.entities = entities;
+                self.merge_entities(entities);
                 if let Some(lp) = local_player {
                     self.local_player = Some(lp);
                 }
-                if let Some(lp) = self.local_player {
-                    if let Some(entity) = self.entities.iter().find(|e| {
-                        matches!(&e.kind, openmmo_common::EntityKind::Player { player_id, .. } if *player_id == lp)
-                    }) {
-                        if let openmmo_common::EntityKind::Player { hp, max_hp, .. } =
-                            &entity.kind
-                        {
-                            self.hp = *hp;
-                            self.max_hp = *max_hp;
+                self.sync_local_hp();
+            }
+            ServerMessage::StateDelta { entities, .. } => {
+                self.merge_entities(entities);
+                self.sync_local_hp();
+            }
+            ServerMessage::PlayerUpdate {
+                player_id,
+                position,
+                hp,
+                max_hp,
+                ..
+            } => {
+                for entity in &mut self.entities {
+                    if let EntityKind::Player {
+                        player_id: pid,
+                        position: pos,
+                        hp: ehp,
+                        max_hp: emhp,
+                        ..
+                    } = &mut entity.kind
+                    {
+                        if *pid == player_id {
+                            *pos = position;
+                            *ehp = hp;
+                            *emhp = max_hp;
                         }
                     }
                 }
-            }
-            ServerMessage::StateDelta { entities, .. } => {
-                self.entities = entities;
+                if self.local_player == Some(player_id) {
+                    self.hp = hp;
+                    self.max_hp = max_hp;
+                }
             }
             ServerMessage::InventoryUpdate {
                 inventory, bank, ..
@@ -231,16 +249,120 @@ impl EngineApp {
                 self.inventory = inventory;
                 self.bank = bank;
             }
-            ServerMessage::SkillUpdate { skills, .. } => {
+            ServerMessage::SkillUpdate {
+                skills,
+                levels_gained,
+            } => {
                 self.skills = skills;
+                for (skill, level) in levels_gained {
+                    self.ui.status = format!("{} level up: {level}", skill.name());
+                    let _ = (skill, level);
+                }
             }
             ServerMessage::ChatMessage { from, message, .. } => {
                 self.ui.chat_log.push((from, message));
+            }
+            ServerMessage::XpDrop { skill, amount } => {
+                self.ui
+                    .xp_drops
+                    .push((skill.name().to_string(), amount));
+            }
+            ServerMessage::Damage {
+                source,
+                target,
+                amount,
+                ..
+            } => {
+                self.ui.combat_log.push(format!(
+                    "Damage: {:?} -> {:?} ({amount})",
+                    source.0, target.0
+                ));
+                self.sync_local_hp();
+            }
+            ServerMessage::Death { entity, .. } => {
+                self.ui.combat_log.push(format!("Entity {} died", entity.0));
+                self.entities.retain(|e| e.entity_id != entity);
+            }
+            ServerMessage::QuestJournal { entries } => {
+                self.quest_text = entries;
+            }
+            ServerMessage::QuestUpdate {
+                quest_id,
+                stage,
+                completed,
+            } => {
+                let name = format!("Quest {}", quest_id.0);
+                let desc = format!("Stage {stage}{}", if completed { " (complete)" } else { "" });
+                if let Some(entry) = self.quest_text.iter_mut().find(|(n, _)| n == &name) {
+                    entry.1 = desc.clone();
+                } else {
+                    self.quest_text.push((name, desc));
+                }
+            }
+            ServerMessage::Dialogue { npc_entity, node } => {
+                self.ui.active_dialogue = Some((npc_entity, node));
+            }
+            ServerMessage::ShopOpen { shop_id, stock } => {
+                self.ui.open_shop = Some((shop_id, stock));
             }
             ServerMessage::Error { message } => {
                 self.ui.status = message;
             }
             _ => {}
+        }
+    }
+
+    fn merge_entities(&mut self, entities: Vec<WorldEntity>) {
+        let ids: std::collections::HashSet<_> = entities.iter().map(|e| e.entity_id).collect();
+        for entity in entities {
+            if let Some(existing) = self
+                .entities
+                .iter_mut()
+                .find(|e| e.entity_id == entity.entity_id)
+            {
+                *existing = entity;
+            } else {
+                self.entities.push(entity);
+            }
+        }
+        self.entities.retain(|e| ids.contains(&e.entity_id));
+    }
+
+    fn sync_local_hp(&mut self) {
+        if let Some(lp) = self.local_player {
+            if let Some(entity) = self.entities.iter().find(|e| {
+                matches!(&e.kind, EntityKind::Player { player_id, .. } if *player_id == lp)
+            }) {
+                if let EntityKind::Player { hp, max_hp, .. } = &entity.kind {
+                    self.hp = *hp;
+                    self.max_hp = *max_hp;
+                }
+            }
+        }
+    }
+
+    fn handle_entity_click(&self, entity_id: openmmo_common::EntityId) -> Option<ClientMessage> {
+        let entity = self.entities.iter().find(|e| e.entity_id == entity_id)?;
+        match &entity.kind {
+            EntityKind::Object { .. } => Some(ClientMessage::Scavenge {
+                object_entity: entity_id,
+            }),
+            EntityKind::GroundItem { .. } => Some(ClientMessage::PickupItem {
+                ground_entity: entity_id,
+            }),
+            EntityKind::Npc { npc_id, .. } => {
+                if npc_id.0 == 100 {
+                    Some(ClientMessage::TalkToNpc {
+                        npc_entity: entity_id,
+                    })
+                } else {
+                    Some(ClientMessage::Attack {
+                        target: entity_id,
+                        style: openmmo_common::CombatStyle::Melee,
+                    })
+                }
+            }
+            _ => None,
         }
     }
 
@@ -335,17 +457,62 @@ impl EngineApp {
             UiAction::DropItem(slot) => {
                 self.send(ClientMessage::DropItem { slot, quantity: 1 });
             }
+            UiAction::EquipItem(slot) => {
+                self.send(ClientMessage::EquipItem { inv_slot: slot });
+            }
+            UiAction::BankDeposit { inv_slot, quantity } => {
+                self.send(ClientMessage::BankDeposit { inv_slot, quantity });
+            }
+            UiAction::BankWithdraw { bank_slot, quantity } => {
+                self.send(ClientMessage::BankWithdraw {
+                    bank_slot,
+                    quantity,
+                });
+            }
+            UiAction::Refine { recipe_id } => {
+                self.send(ClientMessage::Refine { recipe_id });
+            }
+            UiAction::DialogueSelect {
+                npc_entity,
+                option_index,
+            } => {
+                self.send(ClientMessage::DialogueSelect {
+                    npc_entity,
+                    option_index,
+                });
+            }
+            UiAction::ShopBuy {
+                shop_id,
+                item_id,
+                quantity,
+            } => {
+                self.send(ClientMessage::ShopBuy {
+                    shop_id,
+                    item_id,
+                    quantity,
+                });
+            }
             UiAction::Connect => {}
             UiAction::None => {}
         }
 
         if self.ui.connected && self.input.left_clicked {
             self.input.left_clicked = false;
-            if let Some(tile) = self.input.tile_under_cursor(
+            let width = renderer.gpu().config.width;
+            let height = renderer.gpu().config.height;
+            if let Some(entity_id) = self.input.entity_under_cursor(
                 renderer.camera(),
-                renderer.gpu().config.width,
-                renderer.gpu().config.height,
+                width,
+                height,
+                &self.entities,
             ) {
+                if let Some(msg) = self.handle_entity_click(entity_id) {
+                    self.send(msg);
+                }
+            } else if let Some(tile) =
+                self.input
+                    .tile_under_cursor(renderer.camera(), width, height)
+            {
                 self.send(ClientMessage::WalkIntent { target: tile });
             }
         }

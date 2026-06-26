@@ -150,10 +150,14 @@ impl GameWorld {
             combat_target: None,
             action: PlayerAction::Idle,
             quest_progress: HashMap::new(),
+            quest_counters: HashMap::new(),
             friends: Vec::new(),
             ledger_rank: 0,
             ledger_points: 0,
             specialization: HashMap::new(),
+            is_moderator: false,
+            last_position: spawn,
+            ticks_stationary: 1,
         };
         player.max_hp = 10 + player.skills.level(Skill::Endurance);
         player.hp = player.max_hp;

@@ -1,0 +1,8 @@
+id: 100
+name: Wasteland Guide
+max_hp: 10
+prowess: 0
+fortitude: 1
+aggro_range: 0
+respawn_ticks: 0
+loot_table: []

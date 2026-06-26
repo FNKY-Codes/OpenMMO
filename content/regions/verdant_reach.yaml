@@ -2,6 +2,11 @@ height: 30
 id: 1
 name: Verdant Reach
 npcs:
+- npc_id: 100
+  position:
+    plane: 0
+    x: 6
+    y: 5
 - npc_id: 1
   position:
     plane: 0

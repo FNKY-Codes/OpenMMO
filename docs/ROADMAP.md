@@ -2,17 +2,17 @@
 
 This document tracks planned work, current delivery status, and recommended priorities for OpenMMO. It reflects the phased plan from the v0.1 foundation release, updated against what is actually shipped on `main`.
 
-**Last reviewed:** 2026-06-26
+**Last reviewed:** 2026-06-26 (implementation pass)
 
 ## Status Summary
 
 | Phase | Goal | Status |
 |-------|------|--------|
 | Phase 0 — Foundation | Workspace, engine, protocol, infra, CI | **Complete** |
-| Phase 1 — Core loop MVP | Skills, harvest/refine/combat, inventory/bank/chat | **Partial** — server logic exists; client wiring is thin |
-| Phase 2 — Content pipeline | YAML content, validator, tutorial quest | **Partial** — pipeline exists; content depth and tooling gaps remain |
-| Phase 3 — Economy & social | GE, trading, friends, ledger, minigames | **Scaffolded** — modules and protocol exist; not playable end-to-end |
-| Phase 4 — Hardening | Anti-cheat, mod tools, plugin API, docs | **Partial** — docs done; enforcement and persistence incomplete |
+| Phase 1 — Core loop MVP | Skills, harvest/refine/combat, inventory/bank/chat | **Mostly complete** — client wired; equipment applied in combat |
+| Phase 2 — Content pipeline | YAML content, validator, tutorial quest | **Mostly complete** — 14 skills, validator expanded, guide NPC fixed |
+| Phase 3 — Economy & social | GE, trading, friends, ledger, minigames | **Partial** — trade/GE settlement, shops, PM routing implemented |
+| Phase 4 — Hardening | Anti-cheat, mod tools, plugin API, docs | **Partial** — speed-hack check, mod gate, optional PostgreSQL save/load |
 
 **Overall:** The architecture and server-side skeleton are in place (~30% end-to-end). The highest-leverage work is wiring the client to existing server systems so the core loop is actually playable.
 
@@ -71,10 +71,10 @@ This document tracks planned work, current delivery status, and recommended prio
 
 ### Success criteria (remaining)
 
-- [ ] Player can harvest, refine, fight, and bank through normal client interactions
-- [ ] XP, damage, and skill updates appear in the HUD without manual protocol messages
-- [ ] Equipment affects combat stats
-- [ ] Tool tags are enforced for harvest nodes
+- [x] Player can harvest, refine, fight, and bank through normal client interactions
+- [x] XP, damage, and skill updates appear in the HUD without manual protocol messages
+- [x] Equipment affects combat stats
+- [x] Tool tags are enforced for harvest nodes
 
 ---
 
@@ -103,11 +103,11 @@ This document tracks planned work, current delivery status, and recommended prio
 
 ### Success criteria (remaining)
 
-- [ ] Tutorial quest is completable as authored
-- [ ] All 14 skills have content definitions
-- [ ] Content validator covers dialogues, shops, and regions
-- [ ] Quest journal is sent to client on login and updates during play
-- [ ] `atlas-packer` tool exists (or README/docs updated to reflect geometry MVP)
+- [x] Tutorial quest is completable as authored
+- [x] All 14 skills have content definitions
+- [x] Content validator covers dialogues, shops, and regions
+- [x] Quest journal is sent to client on login and updates during play
+- [x] `atlas-packer` tool exists (or README/docs updated to reflect geometry MVP)
 
 ---
 

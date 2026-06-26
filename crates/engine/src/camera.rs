@@ -99,4 +99,48 @@ impl Camera {
         let hit = math::ray_plane_y_intersection(origin, dir)?;
         Some(TilePos::new(hit.x.floor() as i32, hit.z.floor() as i32))
     }
+
+    pub fn pick_entity(
+        &self,
+        mouse_x: f32,
+        mouse_y: f32,
+        width: u32,
+        height: u32,
+        entities: &[openmmo_common::WorldEntity],
+    ) -> Option<openmmo_common::EntityId> {
+        let inv_vp = self.inverse_view_projection(width, height);
+        let (origin, dir) = math::screen_to_world_ray(
+            mouse_x,
+            mouse_y,
+            width.max(1) as f32,
+            height.max(1) as f32,
+            inv_vp,
+        );
+        let hit = math::ray_plane_y_intersection(origin, dir)?;
+        let mut best: Option<(openmmo_common::EntityId, f32)> = None;
+        for entity in entities {
+            let pos = entity_tile(entity)?;
+            let cx = pos.x as f32 + 0.5;
+            let cz = pos.y as f32 + 0.5;
+            let dx = hit.x - cx;
+            let dz = hit.z - cz;
+            let dist = (dx * dx + dz * dz).sqrt();
+            if dist <= 1.2 {
+                if best.is_none() || dist < best.unwrap().1 {
+                    best = Some((entity.entity_id, dist));
+                }
+            }
+        }
+        best.map(|(id, _)| id)
+    }
+}
+
+fn entity_tile(entity: &openmmo_common::WorldEntity) -> Option<TilePos> {
+    use openmmo_common::EntityKind;
+    match &entity.kind {
+        EntityKind::Player { position, .. }
+        | EntityKind::Npc { position, .. }
+        | EntityKind::Object { position, .. }
+        | EntityKind::GroundItem { position, .. } => Some(*position),
+    }
 }

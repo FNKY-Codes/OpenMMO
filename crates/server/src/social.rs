@@ -38,17 +38,36 @@ pub fn handle_private_message(
     player_id: PlayerId,
     to: String,
     message: String,
-) -> Vec<ServerMessage> {
+) -> Vec<(PlayerId, ServerMessage)> {
     let from = world
         .players
         .get(&player_id)
         .map(|p| p.name.clone())
         .unwrap_or_default();
-    vec![ServerMessage::ChatMessage {
+    let recipient = world.players.values().find(|p| p.name == to).map(|p| p.id);
+    let msg = ServerMessage::ChatMessage {
         channel: ChatChannel::Private,
-        from,
-        message: format!("@{to}: {message}"),
-    }]
+        from: from.clone(),
+        message: message.clone(),
+    };
+    if let Some(target_id) = recipient {
+        vec![(target_id, msg), (player_id, msg_for_sender(&from, &to, &message))]
+    } else {
+        vec![(
+            player_id,
+            ServerMessage::Error {
+                message: format!("Player '{to}' not found"),
+            },
+        )]
+    }
+}
+
+fn msg_for_sender(from: &str, to: &str, message: &str) -> ServerMessage {
+    ServerMessage::ChatMessage {
+        channel: ChatChannel::Private,
+        from: from.to_string(),
+        message: format!("To {to}: {message}"),
+    }
 }
 
 pub fn broadcast_chat(
@@ -57,7 +76,7 @@ pub fn broadcast_chat(
     from: String,
     message: String,
 ) -> Vec<ServerMessage> {
-    world.audit_log.len();
+    let _ = world.audit_log.len();
     vec![ServerMessage::ChatMessage {
         channel,
         from,
