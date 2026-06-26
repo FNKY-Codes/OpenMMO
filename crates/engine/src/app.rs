@@ -37,6 +37,7 @@ pub struct EngineApp {
     pub hp: u32,
     pub max_hp: u32,
     pub quest_text: Vec<(String, String)>,
+    pub player_camera_target: Option<openmmo_common::TilePos>,
     pub net_tx: Option<Sender<NetCommand>>,
     pub net_rx: Option<Receiver<ServerMessage>>,
 }
@@ -55,6 +56,7 @@ impl Default for EngineApp {
             hp: 10,
             max_hp: 10,
             quest_text: Vec::new(),
+            player_camera_target: None,
             net_tx: None,
             net_rx: None,
         }
@@ -105,13 +107,70 @@ impl EngineApp {
                         winit::event::WindowEvent::CursorMoved { position, .. } => {
                             self.input.mouse_x = position.x as f32;
                             self.input.mouse_y = position.y as f32;
+
+                            if !response.consumed {
+                                if self.input.right_dragging {
+                                    let (dx, dy) = self.input.drag_delta();
+                                    renderer
+                                        .camera_mut()
+                                        .rotate(-dx * 0.005, dy * 0.005);
+                                } else if self.input.middle_dragging {
+                                    let (dx, dy) = self.input.drag_delta();
+                                    let pan_scale = renderer.camera().distance * 0.002;
+                                    renderer
+                                        .camera_mut()
+                                        .pan(-dx * pan_scale, dy * pan_scale);
+                                }
+                            }
                         }
                         winit::event::WindowEvent::MouseInput { state, button, .. } => {
-                            if !response.consumed
-                                && state == winit::event::ElementState::Pressed
-                                && button == winit::event::MouseButton::Left
-                            {
-                                self.input.left_clicked = true;
+                            if !response.consumed {
+                                match (state, button) {
+                                    (
+                                        winit::event::ElementState::Pressed,
+                                        winit::event::MouseButton::Left,
+                                    ) => {
+                                        self.input.left_clicked = true;
+                                    }
+                                    (
+                                        winit::event::ElementState::Pressed,
+                                        winit::event::MouseButton::Right,
+                                    ) => {
+                                        self.input.right_dragging = true;
+                                        self.input.begin_drag();
+                                    }
+                                    (
+                                        winit::event::ElementState::Released,
+                                        winit::event::MouseButton::Right,
+                                    ) => {
+                                        self.input.right_dragging = false;
+                                    }
+                                    (
+                                        winit::event::ElementState::Pressed,
+                                        winit::event::MouseButton::Middle,
+                                    ) => {
+                                        self.input.middle_dragging = true;
+                                        self.input.begin_drag();
+                                    }
+                                    (
+                                        winit::event::ElementState::Released,
+                                        winit::event::MouseButton::Middle,
+                                    ) => {
+                                        self.input.middle_dragging = false;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        winit::event::WindowEvent::MouseWheel { delta, .. } => {
+                            if !response.consumed {
+                                let scroll = match delta {
+                                    winit::event::MouseScrollDelta::LineDelta(_, y) => y * 3.0,
+                                    winit::event::MouseScrollDelta::PixelDelta(pos) => {
+                                        pos.y as f32 * 0.15
+                                    }
+                                };
+                                self.input.scroll_delta += scroll;
                             }
                         }
                         winit::event::WindowEvent::RedrawRequested => {
@@ -175,9 +234,12 @@ impl EngineApp {
                     if let Some(entity) = self.entities.iter().find(|e| {
                         matches!(&e.kind, openmmo_common::EntityKind::Player { player_id, .. } if *player_id == lp)
                     }) {
-                        if let openmmo_common::EntityKind::Player { hp, max_hp, .. } = &entity.kind {
+                        if let openmmo_common::EntityKind::Player { hp, max_hp, position, .. } =
+                            &entity.kind
+                        {
                             self.hp = *hp;
                             self.max_hp = *max_hp;
+                            self.player_camera_target = Some(*position);
                         }
                     }
                 }
@@ -215,6 +277,15 @@ impl EngineApp {
         window: &winit::window::Window,
     ) {
         self.poll_network();
+
+        if let Some(tile) = self.player_camera_target.take() {
+            renderer.camera_mut().center_on_tile(tile);
+        }
+
+        let scroll = self.input.take_scroll();
+        if scroll != 0.0 {
+            renderer.camera_mut().zoom(scroll);
+        }
 
         let Ok((output, view, mut encoder)) = renderer.begin_frame() else {
             return;
@@ -279,10 +350,13 @@ impl EngineApp {
 
         if self.ui.connected && self.input.left_clicked {
             self.input.left_clicked = false;
-            let tile = self
-                .input
-                .tile_under_cursor(renderer.camera().x, renderer.camera().y);
-            self.send(ClientMessage::WalkIntent { target: tile });
+            if let Some(tile) = self.input.tile_under_cursor(
+                renderer.camera(),
+                renderer.gpu().config.width,
+                renderer.gpu().config.height,
+            ) {
+                self.send(ClientMessage::WalkIntent { target: tile });
+            }
         }
 
         egui_state.handle_platform_output(window, full_output.platform_output);
