@@ -198,7 +198,9 @@ impl EngineApp {
             } => {
                 self.ui.connected = success;
                 self.ui.status = message;
-                self.local_player = player_id;
+                if success {
+                    self.local_player = player_id;
+                }
             }
             ServerMessage::WorldSnapshot {
                 entities,
@@ -206,8 +208,10 @@ impl EngineApp {
                 ..
             } => {
                 self.entities = entities;
-                self.local_player = local_player;
                 if let Some(lp) = local_player {
+                    self.local_player = Some(lp);
+                }
+                if let Some(lp) = self.local_player {
                     if let Some(entity) = self.entities.iter().find(|e| {
                         matches!(&e.kind, openmmo_common::EntityKind::Player { player_id, .. } if *player_id == lp)
                     }) {
