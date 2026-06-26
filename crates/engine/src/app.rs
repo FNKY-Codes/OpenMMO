@@ -216,53 +216,6 @@ impl EngineApp {
     ) {
         self.poll_network();
 
-        if !self.ui.connected {
-            if self.ui.draw_login(egui_ctx) {
-                if let Some(tx) = &self.net_tx {
-                    let _ = tx.send(NetCommand::Connect {
-                        url: self.ui.connection_url.clone(),
-                        username: self.ui.username.clone(),
-                        character: self.ui.character_name.clone(),
-                    });
-                }
-                self.ui.status = "Connecting...".into();
-            }
-        } else {
-            let action = self.ui.draw_hud(
-                egui_ctx,
-                &self.inventory,
-                &self.bank,
-                &self.skills,
-                self.hp,
-                self.max_hp,
-                &self.quest_text,
-            );
-            match action {
-                UiAction::Chat(msg) => {
-                    self.send(ClientMessage::Chat {
-                        channel: openmmo_protocol::ChatChannel::Local,
-                        message: msg,
-                    });
-                }
-                UiAction::DropItem(slot) => {
-                    self.send(ClientMessage::DropItem {
-                        slot,
-                        quantity: 1,
-                    });
-                }
-                UiAction::Connect => {}
-                UiAction::None => {}
-            }
-
-            if self.input.left_clicked {
-                self.input.left_clicked = false;
-                let tile =
-                    self.input
-                        .tile_under_cursor(renderer.camera().x, renderer.camera().y);
-                self.send(ClientMessage::WalkIntent { target: tile });
-            }
-        }
-
         let Ok((output, view, mut encoder)) = renderer.begin_frame() else {
             return;
         };
@@ -276,7 +229,62 @@ impl EngineApp {
         );
 
         let raw_input = egui_state.take_egui_input(window);
-        let full_output = egui_ctx.run(raw_input, |_ctx| {});
+
+        let mut connect = false;
+        let mut ui_action = UiAction::None;
+
+        let full_output = egui_ctx.run(raw_input, |ctx| {
+            if !self.ui.connected {
+                connect = self.ui.draw_login(ctx);
+            } else {
+                ui_action = self.ui.draw_hud(
+                    ctx,
+                    &self.inventory,
+                    &self.bank,
+                    &self.skills,
+                    self.hp,
+                    self.max_hp,
+                    &self.quest_text,
+                );
+            }
+        });
+
+        if connect {
+            if let Some(tx) = &self.net_tx {
+                let _ = tx.send(NetCommand::Connect {
+                    url: self.ui.connection_url.clone(),
+                    username: self.ui.username.clone(),
+                    character: self.ui.character_name.clone(),
+                });
+            }
+            self.ui.status = "Connecting...".into();
+        }
+
+        match ui_action {
+            UiAction::Chat(msg) => {
+                self.send(ClientMessage::Chat {
+                    channel: openmmo_protocol::ChatChannel::Local,
+                    message: msg,
+                });
+            }
+            UiAction::DropItem(slot) => {
+                self.send(ClientMessage::DropItem {
+                    slot,
+                    quantity: 1,
+                });
+            }
+            UiAction::Connect => {}
+            UiAction::None => {}
+        }
+
+        if self.ui.connected && self.input.left_clicked {
+            self.input.left_clicked = false;
+            let tile = self
+                .input
+                .tile_under_cursor(renderer.camera().x, renderer.camera().y);
+            self.send(ClientMessage::WalkIntent { target: tile });
+        }
+
         egui_state.handle_platform_output(window, full_output.platform_output);
 
         let pixels_per_point = window.scale_factor() as f32;
