@@ -1,0 +1,16 @@
+id: 2
+name: Ridge Bandit
+max_hp: 15
+prowess: 5
+fortitude: 3
+aggro_range: 5
+respawn_ticks: 25
+loot_table:
+  - item_id: 8
+    min_qty: 1
+    max_qty: 1
+    rate: 0.1
+  - item_id: 1
+    min_qty: 2
+    max_qty: 5
+    rate: 0.9

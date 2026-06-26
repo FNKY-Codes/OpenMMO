@@ -1,0 +1,13 @@
+id: starter_supplies
+name: Starter Supplies
+restock_ticks: 100
+stock:
+  - item_id: 9
+    price: 10
+    quantity: 10
+  - item_id: 10
+    price: 10
+    quantity: 10
+  - item_id: 7
+    price: 5
+    quantity: 20

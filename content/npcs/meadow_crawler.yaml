@@ -1,0 +1,12 @@
+id: 1
+name: Meadow Crawler
+max_hp: 8
+prowess: 2
+fortitude: 1
+aggro_range: 3
+respawn_ticks: 15
+loot_table:
+  - item_id: 1
+    min_qty: 1
+    max_qty: 2
+    rate: 0.8

@@ -1,0 +1,9 @@
+id: npc_1
+text: Welcome, wanderer. Verdant Reach rewards those who master the Callings.
+options:
+  - label: Tell me about Callings.
+    next: npc_1_callings
+  - label: I'm ready to begin.
+    action:
+      type: start_quest
+      quest_id: 1

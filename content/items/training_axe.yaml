@@ -1,0 +1,8 @@
+id: 9
+name: Training Axe
+stackable: false
+equip_slot: null
+prowess_bonus: 0
+fortitude_bonus: 0
+tool_tag: axe
+alchemy_value: 20

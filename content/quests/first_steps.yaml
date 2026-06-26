@@ -1,0 +1,33 @@
+id: 1
+name: First Steps in the Reach
+description: Learn the Callings and prove you can survive Verdant Reach.
+stages:
+  - stage: 1
+    description: Speak with the guide at spawn.
+    objective:
+      type: talk_to_npc
+      npc_id: 1
+  - stage: 2
+    description: Gather timber from a birch node.
+    objective:
+      type: harvest
+      tag: timber
+      count: 1
+  - stage: 3
+    description: Refine timber into a plank.
+    objective:
+      type: refine
+      recipe_id: timber_to_plank
+      count: 1
+  - stage: 4
+    description: Defeat a Meadow Crawler in combat.
+    objective:
+      type: kill_npc
+      npc_id: 1
+      count: 1
+  - stage: 5
+    description: Reach Harvest level 5.
+    objective:
+      type: reach_skill_level
+      skill: harvest
+      level: 5

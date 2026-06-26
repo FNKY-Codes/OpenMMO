@@ -1,0 +1,8 @@
+id: 8
+name: Bronze Blade
+stackable: false
+equip_slot: weapon
+prowess_bonus: 5
+fortitude_bonus: 0
+tool_tag: null
+alchemy_value: 40

@@ -1,0 +1,8 @@
+id: 2
+name: Copper Vein
+harvest_tag: ore
+harvest_level: 1
+harvest_xp: 30
+harvest_item: 4
+harvest_ticks: 4
+depletes: true

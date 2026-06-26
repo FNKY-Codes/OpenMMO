@@ -1,0 +1,12 @@
+id: bronze_blade
+name: Forge Bronze Blade
+refinement_level: 5
+refinement_xp: 50
+inputs:
+  - item_id: 5
+    quantity: 2
+  - item_id: 3
+    quantity: 1
+output: 8
+output_qty: 1
+ticks: 5

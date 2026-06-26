@@ -1,0 +1,15 @@
+[package]
+name = "openmmo-content-validator"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "content-validator"
+path = "src/main.rs"
+
+[dependencies]
+openmmo-common = { path = "../../crates/common" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+anyhow = { workspace = true }
