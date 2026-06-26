@@ -1,5 +1,6 @@
 use egui::{Context, RichText};
-use openmmo_common::{DialogueNode, EquipSlot, Inventory, Skill, SkillBook};
+use openmmo_common::{DialogueNode, Inventory, MarketOffer, Skill, SkillBook};
+use uuid::Uuid;
 
 pub struct GameUi {
     pub show_inventory: bool,
@@ -22,6 +23,19 @@ pub struct GameUi {
     pub active_dialogue: Option<(openmmo_common::EntityId, DialogueNode)>,
     pub open_shop: Option<(String, Vec<openmmo_common::ShopStock>)>,
     pub bank_mode_deposit: bool,
+    pub market_offers: Vec<MarketOffer>,
+    pub market_item_id: String,
+    pub market_qty: String,
+    pub market_price: String,
+    pub market_is_buy: bool,
+    pub friends: Vec<String>,
+    pub online_players: Vec<String>,
+    pub friend_add_input: String,
+    pub pm_target: String,
+    pub trade_partner: Option<String>,
+    pub trade_their_items: Vec<openmmo_common::InventorySlot>,
+    pub trade_your_items: Vec<openmmo_common::InventorySlot>,
+    pub trade_partner_name: String,
 }
 
 impl Default for GameUi {
@@ -47,6 +61,19 @@ impl Default for GameUi {
             active_dialogue: None,
             open_shop: None,
             bank_mode_deposit: true,
+            market_offers: Vec::new(),
+            market_item_id: "2".to_string(),
+            market_qty: "1".to_string(),
+            market_price: "10".to_string(),
+            market_is_buy: false,
+            friends: Vec::new(),
+            online_players: Vec::new(),
+            friend_add_input: String::new(),
+            pm_target: String::new(),
+            trade_partner: None,
+            trade_their_items: Vec::new(),
+            trade_your_items: Vec::new(),
+            trade_partner_name: String::new(),
         }
     }
 }
@@ -230,6 +257,102 @@ impl GameUi {
                     });
                 }
             }
+
+            if self.show_market {
+                ui.heading("Open Market");
+                ui.horizontal(|ui| {
+                    ui.label("Item id");
+                    ui.text_edit_singleline(&mut self.market_item_id);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Qty");
+                    ui.text_edit_singleline(&mut self.market_qty);
+                    ui.label("Price");
+                    ui.text_edit_singleline(&mut self.market_price);
+                });
+                ui.checkbox(&mut self.market_is_buy, "Buy offer");
+                if ui.button("Place offer").clicked() {
+                    if let (Ok(item_id), Ok(qty), Ok(price)) = (
+                        self.market_item_id.parse::<u32>(),
+                        self.market_qty.parse::<u32>(),
+                        self.market_price.parse::<u32>(),
+                    ) {
+                        action = UiAction::MarketPlaceOffer {
+                            item_id: openmmo_common::ItemId(item_id),
+                            quantity: qty,
+                            price_per: price,
+                            is_buy: self.market_is_buy,
+                        };
+                    }
+                }
+                for offer in &self.market_offers {
+                    ui.label(format!(
+                        "{} {} x{} @ {} ({})",
+                        if offer.is_buy { "BUY" } else { "SELL" },
+                        offer.item_id.0,
+                        offer.quantity,
+                        offer.price_per,
+                        offer.player_name
+                    ));
+                    if ui.small_button(format!("Cancel {}", offer.id)).clicked() {
+                        action = UiAction::MarketCancelOffer { offer_id: offer.id };
+                    }
+                }
+            }
+
+            if self.show_friends {
+                ui.heading("Friends");
+                ui.horizontal(|ui| {
+                    ui.text_edit_singleline(&mut self.friend_add_input);
+                    if ui.button("Add").clicked() && !self.friend_add_input.is_empty() {
+                        action = UiAction::FriendAdd {
+                            name: self.friend_add_input.clone(),
+                        };
+                        self.friend_add_input.clear();
+                    }
+                });
+                for f in &self.friends {
+                    let online = self.online_players.contains(f);
+                    ui.label(format!("{f}{}", if online { " (online)" } else { "" }));
+                }
+                ui.separator();
+                ui.label("Private message");
+                ui.text_edit_singleline(&mut self.pm_target);
+                if ui.button("Send PM").clicked() && !self.pm_target.is_empty() {
+                    let parts: Vec<_> = self.pm_target.splitn(2, ':').collect();
+                    if parts.len() == 2 {
+                        action = UiAction::PrivateMessage {
+                            to: parts[0].trim().to_string(),
+                            message: parts[1].trim().to_string(),
+                        };
+                    }
+                }
+                ui.separator();
+                ui.label("Trade");
+                ui.text_edit_singleline(&mut self.trade_partner_name);
+                if ui.button("Request trade").clicked() && !self.trade_partner_name.is_empty() {
+                    action = UiAction::TradeRequestByName {
+                        name: self.trade_partner_name.clone(),
+                    };
+                }
+                if let Some(partner) = &self.trade_partner {
+                    ui.label(format!("Trading with {partner}"));
+                    for item in &self.trade_their_items {
+                        ui.label(format!("Their: item {} x{}", item.item_id.0, item.quantity));
+                    }
+                    for item in &self.trade_your_items {
+                        ui.label(format!("Yours: item {} x{}", item.item_id.0, item.quantity));
+                    }
+                    if ui.button("Accept trade").clicked() {
+                        action = UiAction::TradeAccept;
+                    }
+                }
+                if ui.button("Join Arena").clicked() {
+                    action = UiAction::JoinMinigame {
+                        minigame_id: "arena".to_string(),
+                    };
+                }
+            }
         });
 
         if let Some((npc_entity, node)) = self.active_dialogue.clone() {
@@ -298,6 +421,29 @@ pub enum UiAction {
         shop_id: String,
         item_id: openmmo_common::ItemId,
         quantity: u32,
+    },
+    MarketPlaceOffer {
+        item_id: openmmo_common::ItemId,
+        quantity: u32,
+        price_per: u32,
+        is_buy: bool,
+    },
+    MarketCancelOffer {
+        offer_id: Uuid,
+    },
+    FriendAdd {
+        name: String,
+    },
+    PrivateMessage {
+        to: String,
+        message: String,
+    },
+    TradeRequestByName {
+        name: String,
+    },
+    TradeAccept,
+    JoinMinigame {
+        minigame_id: String,
     },
     Connect,
 }

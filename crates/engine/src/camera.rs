@@ -140,6 +140,7 @@ fn entity_tile(entity: &openmmo_common::WorldEntity) -> Option<TilePos> {
     match &entity.kind {
         EntityKind::Player { position, .. }
         | EntityKind::Npc { position, .. }
+        | EntityKind::Boss { position, .. }
         | EntityKind::Object { position, .. }
         | EntityKind::GroundItem { position, .. } => Some(*position),
     }

@@ -188,6 +188,11 @@ impl GameWorld {
         }
         for n in self.npcs.values() {
             if n.alive {
+                let aggro_range = self
+                    .content
+                    .npc(n.npc_id)
+                    .map(|d| d.aggro_range)
+                    .unwrap_or(0);
                 entities.push(WorldEntity {
                     entity_id: n.entity_id,
                     kind: EntityKind::Npc {
@@ -196,9 +201,21 @@ impl GameWorld {
                         position: n.position,
                         hp: n.hp,
                         max_hp: n.max_hp,
+                        aggro_range,
                     },
                 });
             }
+        }
+        if let Some(boss) = &self.boss {
+            entities.push(WorldEntity {
+                entity_id: boss.entity_id,
+                kind: EntityKind::Boss {
+                    name: boss.name.clone(),
+                    position: boss.position,
+                    hp: boss.hp,
+                    max_hp: boss.max_hp,
+                },
+            });
         }
         for o in self.objects.values() {
             if !o.depleted {
@@ -225,10 +242,15 @@ impl GameWorld {
     }
 
     pub fn audit(&mut self, msg: &str) {
-        self.audit_log
-            .push_back(format!("[tick {}] {msg}", self.tick));
+        let entry = format!("[tick {}] {msg}", self.tick);
+        self.audit_log.push_back(entry.clone());
         if self.audit_log.len() > 1000 {
             self.audit_log.pop_front();
+        }
+        if let Ok(db_url) = std::env::var("DATABASE_URL") {
+            tokio::spawn(async move {
+                let _ = crate::persistence::persist_audit(&db_url, &entry).await;
+            });
         }
     }
 

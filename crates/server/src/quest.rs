@@ -314,3 +314,103 @@ pub fn quest_update_messages(world: &GameWorld, player_id: PlayerId) -> Vec<Serv
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use openmmo_common::{
+        ContentPack, HarvestTag, Inventory, NpcId, PlayerState, QuestId, Skill, SkillBook, TilePos,
+    };
+    use uuid::Uuid;
+
+    use crate::state::GameWorld;
+
+    fn load_test_content() -> ContentPack {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        openmmo_common::load_content(&path).expect("content dir")
+    }
+
+    fn test_player(id: u128, quest_progress: HashMap<QuestId, u32>) -> PlayerState {
+        let pid = PlayerId(Uuid::from_u128(id));
+        PlayerState {
+            id: pid,
+            name: "Tester".into(),
+            entity_id: openmmo_common::EntityId(id as u32),
+            position: TilePos::new(0, 0),
+            hp: 10,
+            max_hp: 10,
+            skills: SkillBook::new_mvp(),
+            inventory: Inventory::new(28),
+            bank: Inventory::new(200),
+            equipment: Default::default(),
+            combat_target: None,
+            action: Default::default(),
+            quest_progress,
+            quest_counters: Default::default(),
+            friends: Vec::new(),
+            ledger_rank: 0,
+            ledger_points: 0,
+            specialization: Default::default(),
+            is_moderator: false,
+            last_position: TilePos::new(0, 0),
+            ticks_stationary: 1,
+        }
+    }
+
+    fn world_with_player(id: u128, quest_progress: HashMap<QuestId, u32>) -> (GameWorld, PlayerId) {
+        let content = load_test_content();
+        let mut world = GameWorld::new(content.clone());
+        world.quests.load(&content);
+        let pid = PlayerId(Uuid::from_u128(id));
+        world.players.insert(pid, test_player(id, quest_progress));
+        (world, pid)
+    }
+
+    #[test]
+    fn talk_to_guide_advances_first_steps_stage_one() {
+        let (mut world, pid) = world_with_player(1, HashMap::from([(QuestId(1), 1)]));
+        let msgs = on_talk_to_npc(&mut world, pid, NpcId(100));
+        assert!(!msgs.is_empty());
+        assert_eq!(
+            world.players.get(&pid).unwrap().quest_progress.get(&QuestId(1)),
+            Some(&2)
+        );
+    }
+
+    #[test]
+    fn harvest_advances_first_steps_stage_two() {
+        let (mut world, pid) = world_with_player(1, HashMap::from([(QuestId(1), 2)]));
+        let msgs = on_harvest(&mut world, pid, Some(HarvestTag::Timber));
+        assert!(!msgs.is_empty());
+        assert_eq!(
+            world.players.get(&pid).unwrap().quest_progress.get(&QuestId(1)),
+            Some(&3)
+        );
+    }
+
+    #[test]
+    fn skill_level_advances_reach_skill_objective() {
+        let (mut world, pid) = world_with_player(1, HashMap::from([(QuestId(1), 5)]));
+        let msgs = on_skill_level(&mut world, pid, Skill::Scavenging, 5);
+        assert!(!msgs.is_empty());
+        assert!(
+            world
+                .players
+                .get(&pid)
+                .unwrap()
+                .quest_progress
+                .get(&QuestId(1))
+                .is_some_and(|s| *s > 5)
+        );
+    }
+
+    #[test]
+    fn quest_journal_lists_active_quests() {
+        let (world, pid) = world_with_player(1, HashMap::from([(QuestId(1), 2)]));
+        let journal = quest_journal(&world, pid);
+        assert!(!journal.is_empty());
+        assert!(journal.iter().any(|(name, _)| name.contains("First Steps")));
+    }
+}
