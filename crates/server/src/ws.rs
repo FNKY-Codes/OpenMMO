@@ -35,7 +35,11 @@ pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     let content = load_content_dir(&content_path).unwrap_or_default();
     let mut world = GameWorld::new(content);
     world.quests.load(&world.content.clone());
-    info!("Loaded content: {} items, {} regions", world.content.items.len(), world.content.regions.len());
+    info!(
+        "Loaded content: {} items, {} regions",
+        world.content.items.len(),
+        world.content.regions.len()
+    );
 
     let world = Arc::new(RwLock::new(world));
     let (broadcast, _) = broadcast::channel(1024);
@@ -90,18 +94,12 @@ async fn drop_rates(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let world = state.world.read().await;
     let mut drops = serde_json::Map::new();
     for npc in &world.content.npcs {
-        drops.insert(
-            npc.name.clone(),
-            serde_json::json!(npc.loot_table),
-        );
+        drops.insert(npc.name.clone(), serde_json::json!(npc.loot_table));
     }
     axum::Json(drops)
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
@@ -153,7 +151,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     .content
                     .items
                     .iter()
-                    .filter(|item| item.name.contains("Bronze") || item.name.contains("Log") || item.name.contains("Timber"))
+                    .filter(|item| {
+                        item.name.contains("Bronze")
+                            || item.name.contains("Log")
+                            || item.name.contains("Timber")
+                    })
                     .map(|item| (item.id, item.stackable))
                     .collect();
                 if let Some(player) = world.players.get_mut(&pid) {

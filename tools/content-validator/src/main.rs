@@ -43,13 +43,19 @@ fn main() -> anyhow::Result<()> {
             match &stage.objective {
                 openmmo_common::QuestObjective::KillNpc { npc_id, .. } => {
                     if !pack.npcs.iter().any(|n| n.id == *npc_id) {
-                        errors.push(format!("Quest {} references missing NPC {}", quest.name, npc_id.0));
+                        errors.push(format!(
+                            "Quest {} references missing NPC {}",
+                            quest.name, npc_id.0
+                        ));
                     }
                 }
-                openmmo_common::QuestObjective::Refine { recipe_id, .. } => {
-                    if pack.recipe(recipe_id).is_none() {
-                        errors.push(format!("Quest {} references missing recipe {}", quest.name, recipe_id));
-                    }
+                openmmo_common::QuestObjective::Refine { recipe_id, .. }
+                    if pack.recipe(recipe_id).is_none() =>
+                {
+                    errors.push(format!(
+                        "Quest {} references missing recipe {}",
+                        quest.name, recipe_id
+                    ));
                 }
                 _ => {}
             }

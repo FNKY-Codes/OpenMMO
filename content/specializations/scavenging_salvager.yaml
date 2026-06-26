@@ -1,0 +1,5 @@
+skill: scavenging
+branch: salvager
+unlock_level: 25
+description: +10% Scavenging XP from timber nodes.
+xp_bonus_tag: timber

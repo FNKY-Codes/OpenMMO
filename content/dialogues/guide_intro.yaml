@@ -1,7 +1,7 @@
 id: npc_1
-text: Welcome, wanderer. Verdant Reach rewards those who master the Callings.
+text: Welcome, survivor. Verdant Reach rewards those who master the paths of the wasteland.
 options:
-  - label: Tell me about Callings.
+  - label: Tell me about the paths.
     next: npc_1_callings
   - label: I'm ready to begin.
     action:

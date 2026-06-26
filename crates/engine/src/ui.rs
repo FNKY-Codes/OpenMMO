@@ -7,7 +7,7 @@ pub struct GameUi {
     pub show_skills: bool,
     pub show_chat: bool,
     pub show_quests: bool,
-    pub show_ge: bool,
+    pub show_market: bool,
     pub show_friends: bool,
     pub show_minimap: bool,
     pub chat_input: String,
@@ -27,7 +27,7 @@ impl Default for GameUi {
             show_skills: true,
             show_chat: true,
             show_quests: false,
-            show_ge: false,
+            show_market: false,
             show_friends: false,
             show_minimap: true,
             chat_input: String::new(),
@@ -83,9 +83,12 @@ impl GameUi {
                 .default_pos([10.0, 10.0])
                 .resizable(false)
                 .show(ctx, |ui| {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 120.0), egui::Sense::hover());
-                    ui.painter().rect_filled(rect, 4.0, egui::Color32::from_rgb(20, 40, 20));
-                    ui.painter().circle_filled(rect.center(), 4.0, egui::Color32::YELLOW);
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(120.0, 120.0), egui::Sense::hover());
+                    ui.painter()
+                        .rect_filled(rect, 4.0, egui::Color32::from_rgb(20, 40, 20));
+                    ui.painter()
+                        .circle_filled(rect.center(), 4.0, egui::Color32::YELLOW);
                 });
         }
 
@@ -120,7 +123,7 @@ impl GameUi {
                 ui.selectable_value(&mut self.show_bank, true, "Bank");
                 ui.selectable_value(&mut self.show_skills, true, "Skills");
                 ui.selectable_value(&mut self.show_quests, true, "Quests");
-                ui.selectable_value(&mut self.show_ge, true, "GE");
+                ui.selectable_value(&mut self.show_market, true, "Open Market");
                 ui.selectable_value(&mut self.show_friends, true, "Friends");
             });
 
@@ -128,7 +131,10 @@ impl GameUi {
                 ui.heading("Inventory");
                 for (i, slot) in inventory.slots.iter().enumerate() {
                     if let Some(s) = slot {
-                        if ui.button(format!("#{i}: item {} x{}", s.item_id.0, s.quantity)).clicked() {
+                        if ui
+                            .button(format!("#{i}: item {} x{}", s.item_id.0, s.quantity))
+                            .clicked()
+                        {
                             action = UiAction::DropItem(i);
                         }
                     }

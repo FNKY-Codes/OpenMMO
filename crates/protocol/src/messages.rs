@@ -1,6 +1,6 @@
 use openmmo_common::{
-    BossState, EntityId, GeOffer, GroundItem, ItemId, NpcId, PlayerId, QuestId, Skill,
-    TilePos, WorldEntity,
+    BossState, EntityId, GroundItem, ItemId, MarketOffer, NpcId, PlayerId, QuestId, Skill, TilePos,
+    WorldEntity,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -19,7 +19,7 @@ pub enum ClientMessage {
     InteractObject {
         object_entity: EntityId,
     },
-    Harvest {
+    Scavenge {
         object_entity: EntityId,
     },
     Refine {
@@ -62,13 +62,13 @@ pub enum ClientMessage {
     TradeAccept {
         target: PlayerId,
     },
-    GePlaceOffer {
+    MarketPlaceOffer {
         item_id: ItemId,
         quantity: u32,
         price_per: u32,
         is_buy: bool,
     },
-    GeCancelOffer {
+    MarketCancelOffer {
         offer_id: Uuid,
     },
     FriendAdd {
@@ -98,10 +98,21 @@ pub enum ClientMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ModCommand {
-    Kick { player: PlayerId },
-    Ban { player: PlayerId },
-    Teleport { player: PlayerId, target: TilePos },
-    SpawnItem { player: PlayerId, item_id: ItemId, qty: u32 },
+    Kick {
+        player: PlayerId,
+    },
+    Ban {
+        player: PlayerId,
+    },
+    Teleport {
+        player: PlayerId,
+        target: TilePos,
+    },
+    SpawnItem {
+        player: PlayerId,
+        item_id: ItemId,
+        qty: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -185,8 +196,8 @@ pub enum ServerMessage {
         partner_accepted: bool,
         you_accepted: bool,
     },
-    GeUpdate {
-        offers: Vec<GeOffer>,
+    OpenMarketUpdate {
+        offers: Vec<MarketOffer>,
     },
     FriendsUpdate {
         friends: Vec<String>,

@@ -50,10 +50,17 @@ pub fn handle_mod_command(
             qty,
         } => {
             if let Some(p) = world.players.get_mut(&player) {
-                let stackable = world.content.item(item_id).map(|i| i.stackable).unwrap_or(true);
+                let stackable = world
+                    .content
+                    .item(item_id)
+                    .map(|i| i.stackable)
+                    .unwrap_or(true);
                 let _ = p.inventory.add_item(item_id, qty, stackable);
             }
-            world.audit(&format!("Moderator spawned item {} for {:?}", item_id.0, player));
+            world.audit(&format!(
+                "Moderator spawned item {} for {:?}",
+                item_id.0, player
+            ));
         }
     }
     Vec::new()

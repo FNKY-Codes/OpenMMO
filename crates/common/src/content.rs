@@ -47,12 +47,10 @@ impl Inventory {
     pub fn add_item(&mut self, item_id: ItemId, quantity: u32, stackable: bool) -> u32 {
         let mut remaining = quantity;
         if stackable {
-            for slot in &mut self.slots {
-                if let Some(s) = slot {
-                    if s.item_id == item_id {
-                        s.quantity += remaining;
-                        return 0;
-                    }
+            for s in self.slots.iter_mut().flatten() {
+                if s.item_id == item_id {
+                    s.quantity += remaining;
+                    return 0;
                 }
             }
         }
@@ -101,10 +99,10 @@ pub struct ObjectDef {
     pub id: ObjectId,
     pub name: String,
     pub harvest_tag: Option<crate::HarvestTag>,
-    pub harvest_level: u32,
-    pub harvest_xp: u64,
+    pub scavenging_level: u32,
+    pub scavenging_xp: u64,
     pub harvest_item: Option<ItemId>,
-    pub harvest_ticks: u32,
+    pub scavenging_ticks: u32,
     pub depletes: bool,
 }
 
@@ -112,8 +110,8 @@ pub struct ObjectDef {
 pub struct RefinementRecipe {
     pub id: String,
     pub name: String,
-    pub refinement_level: u32,
-    pub refinement_xp: u64,
+    pub fabrication_level: u32,
+    pub fabrication_xp: u64,
     pub inputs: Vec<RecipeInput>,
     pub output: ItemId,
     pub output_qty: u32,
@@ -130,7 +128,7 @@ pub struct RecipeInput {
 pub struct SpellDef {
     pub id: String,
     pub name: String,
-    pub arcana_level: u32,
+    pub electrics_level: u32,
     pub max_hit: u32,
     pub xp: u64,
 }

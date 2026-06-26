@@ -1,7 +1,7 @@
 id: ore_to_ingot
-name: Smelt Ore
-refinement_level: 1
-refinement_xp: 35
+name: Ore to Ingot
+fabrication_level: 1
+fabrication_xp: 35
 inputs:
   - item_id: 4
     quantity: 1

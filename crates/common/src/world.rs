@@ -36,16 +36,20 @@ pub struct Equipment {
     pub shield: Option<crate::InventorySlot>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PlayerAction {
+    #[default]
     Idle,
-    Walking { path: Vec<TilePos>, index: usize },
-    Harvesting {
+    Walking {
+        path: Vec<TilePos>,
+        index: usize,
+    },
+    Scavenging {
         object_entity: EntityId,
         ticks_remaining: u32,
     },
-    Refining {
+    Fabricating {
         recipe_id: String,
         ticks_remaining: u32,
     },
@@ -57,12 +61,6 @@ pub enum PlayerAction {
         target: EntityId,
         spell_id: String,
     },
-}
-
-impl Default for PlayerAction {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,7 +131,7 @@ pub enum EntityKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeOffer {
+pub struct MarketOffer {
     pub id: uuid::Uuid,
     pub player_name: String,
     pub item_id: ItemId,

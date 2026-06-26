@@ -259,8 +259,14 @@ impl Renderer {
 
     pub fn begin_frame(
         &mut self,
-    ) -> Result<(wgpu::SurfaceTexture, wgpu::TextureView, wgpu::CommandEncoder), wgpu::SurfaceError>
-    {
+    ) -> Result<
+        (
+            wgpu::SurfaceTexture,
+            wgpu::TextureView,
+            wgpu::CommandEncoder,
+        ),
+        wgpu::SurfaceError,
+    > {
         let output = self.gpu.surface.get_current_texture()?;
         let view = output
             .texture
@@ -288,9 +294,7 @@ impl Renderer {
         self.gpu.queue.write_buffer(
             &self.uniform_buffer,
             0,
-            bytemuck::bytes_of(&Uniforms {
-                view_proj: vp.cols,
-            }),
+            bytemuck::bytes_of(&Uniforms { view_proj: vp.cols }),
         );
 
         let mut vertices = Vec::new();
@@ -306,11 +310,9 @@ impl Renderer {
         }
 
         if !vertices.is_empty() {
-            self.gpu.queue.write_buffer(
-                &self.vertex_buffer,
-                0,
-                bytemuck::cast_slice(&vertices),
-            );
+            self.gpu
+                .queue
+                .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
         }
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -401,9 +403,7 @@ impl Renderer {
                 };
                 self.add_entity_cube(*position, 0.9, 1.8, color, vertices);
             }
-            openmmo_common::EntityKind::Npc {
-                position, hp, ..
-            } => {
+            openmmo_common::EntityKind::Npc { position, hp, .. } => {
                 let color = if *hp > 0 {
                     [0.85, 0.2, 0.2, 1.0]
                 } else {
@@ -421,11 +421,7 @@ impl Renderer {
     }
 
     fn tile_center(tile: TilePos) -> [f32; 3] {
-        [
-            tile.x as f32 + 0.5,
-            0.0,
-            tile.y as f32 + 0.5,
-        ]
+        [tile.x as f32 + 0.5, 0.0, tile.y as f32 + 0.5]
     }
 
     fn add_tile_block(
@@ -453,7 +449,12 @@ impl Renderer {
         vertices: &mut Vec<Vertex>,
     ) {
         let [cx, _, cz] = Self::tile_center(tile);
-        add_box([cx, height * 0.5, cz], [width, height, width], color, vertices);
+        add_box(
+            [cx, height * 0.5, cz],
+            [width, height, width],
+            color,
+            vertices,
+        );
     }
 }
 
@@ -498,13 +499,7 @@ fn add_box(center: [f32; 3], size: [f32; 3], color: [f32; 4], vertices: &mut Vec
     }
 }
 
-fn push_tri(
-    a: [f32; 3],
-    b: [f32; 3],
-    c: [f32; 3],
-    color: [f32; 4],
-    vertices: &mut Vec<Vertex>,
-) {
+fn push_tri(a: [f32; 3], b: [f32; 3], c: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
     for position in [a, b, c] {
         vertices.push(Vertex { position, color });
     }

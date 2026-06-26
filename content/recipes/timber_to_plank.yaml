@@ -1,10 +1,10 @@
 id: timber_to_plank
-name: Refine Timber
-refinement_level: 1
-refinement_xp: 30
+name: Timber to Plank
+fabrication_level: 1
+fabrication_xp: 30
 inputs:
   - item_id: 2
     quantity: 1
-output: 3
+output: 7
 output_qty: 1
 ticks: 3

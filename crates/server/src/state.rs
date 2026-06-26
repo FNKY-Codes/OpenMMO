@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use openmmo_common::{
-    BossState, ContentPack, EntityId, EntityKind, GeOffer, GroundItem, MinigameLobby, NpcId,
+    BossState, ContentPack, EntityId, EntityKind, GroundItem, MarketOffer, MinigameLobby, NpcId,
     NpcState, ObjectId, ObjectState, PlayerAction, PlayerId, PlayerState, QuestId, RegionDef,
     RegionId, Skill, SkillBook, TilePos, WorldEntity, INVENTORY_SIZE,
 };
@@ -102,11 +102,7 @@ impl GameWorld {
     }
 
     pub fn spawn_npc(&mut self, npc_id: NpcId, position: TilePos) -> EntityId {
-        let def = self
-            .content
-            .npc(npc_id)
-            .expect("npc def")
-            .clone();
+        let def = self.content.npc(npc_id).expect("npc def").clone();
         let eid = self.alloc_entity();
         self.npcs.insert(
             eid,
@@ -159,7 +155,7 @@ impl GameWorld {
             ledger_points: 0,
             specialization: HashMap::new(),
         };
-        player.max_hp = 10 + player.skills.level(Skill::Vitality) as u32;
+        player.max_hp = 10 + player.skills.level(Skill::Endurance);
         player.hp = player.max_hp;
         self.players.insert(id, player);
         self.audit(&format!("Player {name} joined"));
@@ -225,7 +221,8 @@ impl GameWorld {
     }
 
     pub fn audit(&mut self, msg: &str) {
-        self.audit_log.push_back(format!("[tick {}] {msg}", self.tick));
+        self.audit_log
+            .push_back(format!("[tick {}] {msg}", self.tick));
         if self.audit_log.len() > 1000 {
             self.audit_log.pop_front();
         }
