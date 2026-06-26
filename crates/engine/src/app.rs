@@ -37,7 +37,6 @@ pub struct EngineApp {
     pub hp: u32,
     pub max_hp: u32,
     pub quest_text: Vec<(String, String)>,
-    pub player_camera_target: Option<openmmo_common::TilePos>,
     pub net_tx: Option<Sender<NetCommand>>,
     pub net_rx: Option<Receiver<ServerMessage>>,
 }
@@ -56,7 +55,6 @@ impl Default for EngineApp {
             hp: 10,
             max_hp: 10,
             quest_text: Vec::new(),
-            player_camera_target: None,
             net_tx: None,
             net_rx: None,
         }
@@ -108,19 +106,11 @@ impl EngineApp {
                             self.input.mouse_x = position.x as f32;
                             self.input.mouse_y = position.y as f32;
 
-                            if !response.consumed {
-                                if self.input.right_dragging {
-                                    let (dx, dy) = self.input.drag_delta();
-                                    renderer
-                                        .camera_mut()
-                                        .rotate(-dx * 0.005, dy * 0.005);
-                                } else if self.input.middle_dragging {
-                                    let (dx, dy) = self.input.drag_delta();
-                                    let pan_scale = renderer.camera().distance * 0.002;
-                                    renderer
-                                        .camera_mut()
-                                        .pan(-dx * pan_scale, dy * pan_scale);
-                                }
+                            if !response.consumed && self.input.right_dragging {
+                                let (dx, dy) = self.input.drag_delta();
+                                renderer
+                                    .camera_mut()
+                                    .rotate(-dx * 0.005, dy * 0.005);
                             }
                         }
                         winit::event::WindowEvent::MouseInput { state, button, .. } => {
@@ -144,19 +134,6 @@ impl EngineApp {
                                         winit::event::MouseButton::Right,
                                     ) => {
                                         self.input.right_dragging = false;
-                                    }
-                                    (
-                                        winit::event::ElementState::Pressed,
-                                        winit::event::MouseButton::Middle,
-                                    ) => {
-                                        self.input.middle_dragging = true;
-                                        self.input.begin_drag();
-                                    }
-                                    (
-                                        winit::event::ElementState::Released,
-                                        winit::event::MouseButton::Middle,
-                                    ) => {
-                                        self.input.middle_dragging = false;
                                     }
                                     _ => {}
                                 }
@@ -234,12 +211,11 @@ impl EngineApp {
                     if let Some(entity) = self.entities.iter().find(|e| {
                         matches!(&e.kind, openmmo_common::EntityKind::Player { player_id, .. } if *player_id == lp)
                     }) {
-                        if let openmmo_common::EntityKind::Player { hp, max_hp, position, .. } =
+                        if let openmmo_common::EntityKind::Player { hp, max_hp, .. } =
                             &entity.kind
                         {
                             self.hp = *hp;
                             self.max_hp = *max_hp;
-                            self.player_camera_target = Some(*position);
                         }
                     }
                 }
@@ -268,6 +244,22 @@ impl EngineApp {
         }
     }
 
+    fn local_player_position(&self) -> Option<openmmo_common::TilePos> {
+        let local_id = self.local_player?;
+        self.entities.iter().find_map(|entity| {
+            if let openmmo_common::EntityKind::Player {
+                player_id,
+                position,
+                ..
+            } = &entity.kind
+            {
+                (*player_id == local_id).then_some(*position)
+            } else {
+                None
+            }
+        })
+    }
+
     fn render_frame(
         &mut self,
         egui_ctx: &egui::Context,
@@ -278,8 +270,10 @@ impl EngineApp {
     ) {
         self.poll_network();
 
-        if let Some(tile) = self.player_camera_target.take() {
-            renderer.camera_mut().center_on_tile(tile);
+        if self.ui.connected {
+            if let Some(position) = self.local_player_position() {
+                renderer.camera_mut().center_on_tile(position);
+            }
         }
 
         let scroll = self.input.take_scroll();

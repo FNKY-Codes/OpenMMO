@@ -38,13 +38,6 @@ impl Camera {
         self.pitch = (self.pitch + dpitch).clamp(0.15, 1.35);
     }
 
-    pub fn pan(&mut self, dx: f32, dz: f32) {
-        let sin = self.yaw.sin();
-        let cos = self.yaw.cos();
-        self.target_x += dx * cos - dz * sin;
-        self.target_z += dx * sin + dz * cos;
-    }
-
     pub fn zoom(&mut self, delta: f32) {
         self.distance = (self.distance - delta).clamp(8.0, 120.0);
     }
