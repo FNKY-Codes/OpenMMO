@@ -1,5 +1,5 @@
 id: npc_1_callings
-text: War, Wild, Craft, and Arcane paths all await. Harvest feeds Refinement. Prowess protects Vitality.
+text: Survival, Outlands, Workshop, and Operator paths all await. Scavenging feeds Fabrication. Combat protects Endurance.
 options:
   - label: I'll start my journey.
     action:

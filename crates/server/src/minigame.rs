@@ -10,7 +10,11 @@ pub struct MinigameState {
     pub arena_players: Vec<PlayerId>,
 }
 
-pub fn handle_join(world: &mut GameWorld, player_id: PlayerId, minigame_id: String) -> Vec<ServerMessage> {
+pub fn handle_join(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    minigame_id: String,
+) -> Vec<ServerMessage> {
     if minigame_id == "arena" {
         if !world.minigames.arena_players.contains(&player_id) {
             world.minigames.arena_players.push(player_id);
@@ -56,7 +60,9 @@ pub fn tick(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessage)>
 }
 
 pub fn tick_boss(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessage)>) {
-    let Some(boss) = world.boss.as_mut() else { return };
+    let Some(boss) = world.boss.as_mut() else {
+        return;
+    };
     if world.tick % 5 == 0 {
         if boss.phase == 1 && boss.hp < boss.max_hp / 2 {
             boss.phase = 2;
@@ -68,12 +74,7 @@ pub fn tick_boss(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMess
                     player.hp = player.hp.saturating_sub(2);
                 }
             }
-            messages.push((
-                pid,
-                ServerMessage::BossUpdate {
-                    boss: boss.clone(),
-                },
-            ));
+            messages.push((pid, ServerMessage::BossUpdate { boss: boss.clone() }));
         }
     }
 }

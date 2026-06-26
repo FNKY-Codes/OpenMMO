@@ -18,31 +18,29 @@ pub async fn network_thread(
                     url,
                     username,
                     character,
-                } => {
-                    match connect_async(&url).await {
-                        Ok((ws, _)) => {
-                            info!("Connected to {url}");
-                            let (sink, stream) = ws.split();
-                            ws_sink = Some(sink);
-                            ws_stream = Some(stream);
-                            let login = ClientMessage::Login {
-                                username,
-                                character_name: character,
-                            };
-                            if let Some(s) = &mut ws_sink {
-                                let _ = s
-                                    .send(Message::Text(encode_client(&login).unwrap().into()))
-                                    .await;
-                            }
-                        }
-                        Err(e) => {
-                            error!("Connect failed: {e}");
-                            let _ = msg_tx.send(ServerMessage::Error {
-                                message: format!("Connection failed: {e}"),
-                            });
+                } => match connect_async(&url).await {
+                    Ok((ws, _)) => {
+                        info!("Connected to {url}");
+                        let (sink, stream) = ws.split();
+                        ws_sink = Some(sink);
+                        ws_stream = Some(stream);
+                        let login = ClientMessage::Login {
+                            username,
+                            character_name: character,
+                        };
+                        if let Some(s) = &mut ws_sink {
+                            let _ = s
+                                .send(Message::Text(encode_client(&login).unwrap().into()))
+                                .await;
                         }
                     }
-                }
+                    Err(e) => {
+                        error!("Connect failed: {e}");
+                        let _ = msg_tx.send(ServerMessage::Error {
+                            message: format!("Connection failed: {e}"),
+                        });
+                    }
+                },
                 NetCommand::Send(msg) => {
                     if let Some(s) = &mut ws_sink {
                         if let Ok(json) = encode_client(&msg) {
@@ -54,11 +52,8 @@ pub async fn network_thread(
         }
 
         if let Some(stream) = &mut ws_stream {
-            while let Ok(Some(Ok(msg))) = tokio::time::timeout(
-                std::time::Duration::from_millis(10),
-                stream.next(),
-            )
-            .await
+            while let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(10), stream.next()).await
             {
                 if let Message::Text(text) = msg {
                     if let Ok(server_msg) = decode_server(&text) {

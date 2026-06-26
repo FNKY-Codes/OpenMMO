@@ -1,10 +1,10 @@
 id: fish_to_fillet
-name: Cook Fish
-refinement_level: 1
-refinement_xp: 25
+name: Fish to Fillet
+fabrication_level: 1
+fabrication_xp: 25
 inputs:
   - item_id: 6
     quantity: 1
-output: 7
+output: 8
 output_qty: 1
-ticks: 3
+ticks: 2

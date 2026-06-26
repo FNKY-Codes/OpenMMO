@@ -11,7 +11,7 @@
 3D world with tile logic on the XZ ground plane (Y is up):
 
 - Each tile is a 1×1 world unit; tile `(x, y)` maps to world `(x, 0, y)`
-- Orbit camera locked on the local player: right-drag to rotate, scroll to zoom
+- Orbit camera locked on the local player: middle-click drag to rotate, scroll to zoom
 - Left-click uses a screen ray → ground-plane intersection for walk intent
 
 Legacy isometric helpers (`tile_to_screen`, `screen_to_tile`) remain in `openmmo-common` for tooling.

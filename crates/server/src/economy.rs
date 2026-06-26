@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 
-use openmmo_common::{GeOffer, InventorySlot, ItemId, PlayerId};
+use openmmo_common::{InventorySlot, ItemId, MarketOffer, PlayerId};
 use openmmo_protocol::ServerMessage;
 use uuid::Uuid;
 
 use crate::state::GameWorld;
-use crate::tick::inventory_update;
 
 #[derive(Debug, Clone)]
 pub struct TradeSession {
@@ -27,13 +26,13 @@ pub struct LedgerContractState {
 
 #[derive(Default)]
 pub struct EconomyState {
-    pub ge_offers: Vec<GeOffer>,
+    pub market_offers: Vec<MarketOffer>,
     pub trades: HashMap<PlayerId, TradeSession>,
     pub ledger_contracts: HashMap<PlayerId, LedgerContractState>,
     pub price_history: HashMap<u32, Vec<u32>>,
 }
 
-pub fn handle_ge_offer(
+pub fn handle_market_offer(
     world: &mut GameWorld,
     player_id: PlayerId,
     item_id: ItemId,
@@ -46,7 +45,7 @@ pub fn handle_ge_offer(
         .get(&player_id)
         .map(|p| p.name.clone())
         .unwrap_or_default();
-    let offer = GeOffer {
+    let offer = MarketOffer {
         id: Uuid::new_v4(),
         player_name: name,
         item_id,
@@ -55,12 +54,12 @@ pub fn handle_ge_offer(
         is_buy,
         created_tick: world.tick,
     };
-    world.economy.ge_offers.push(offer);
-    world.audit(&format!("GE offer placed by {player_id:?}"));
-    vec![ge_update(world)]
+    world.economy.market_offers.push(offer);
+    world.audit(&format!("Open Market offer placed by {player_id:?}"));
+    vec![open_market_update(world)]
 }
 
-pub fn handle_ge_cancel(
+pub fn handle_market_cancel(
     world: &mut GameWorld,
     player_id: PlayerId,
     offer_id: Uuid,
@@ -70,8 +69,11 @@ pub fn handle_ge_cancel(
         .get(&player_id)
         .map(|p| p.name.clone())
         .unwrap_or_default();
-    world.economy.ge_offers.retain(|o| o.id != offer_id || o.player_name != name);
-    vec![ge_update(world)]
+    world
+        .economy
+        .market_offers
+        .retain(|o| o.id != offer_id || o.player_name != name);
+    vec![open_market_update(world)]
 }
 
 pub fn handle_trade_request(
@@ -102,7 +104,11 @@ pub fn handle_trade_offer(
     if let Some(session) = world.economy.trades.get_mut(&from) {
         session.items_a = items;
         session.accepted_a = false;
-        let partner = world.players.get(&to).map(|p| p.name.clone()).unwrap_or_default();
+        let partner = world
+            .players
+            .get(&to)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
         return vec![ServerMessage::TradeUpdate {
             partner,
             their_items: session.items_b.clone(),
@@ -139,18 +145,21 @@ fn execute_trade(world: &mut GameWorld, from: PlayerId) {
         Some(s) => s,
         None => return,
     };
-    world.audit(&format!("Trade executed between {:?} and {:?}", session.player_a, session.player_b));
+    world.audit(&format!(
+        "Trade executed between {:?} and {:?}",
+        session.player_a, session.player_b
+    ));
     let _ = session;
 }
 
 pub fn match_offers(world: &mut GameWorld) {
     let mut i = 0;
-    while i < world.economy.ge_offers.len() {
-        let buy_idx = world.economy.ge_offers.iter().position(|o| o.is_buy);
-        let sell_idx = world.economy.ge_offers.iter().position(|o| !o.is_buy);
+    while i < world.economy.market_offers.len() {
+        let buy_idx = world.economy.market_offers.iter().position(|o| o.is_buy);
+        let sell_idx = world.economy.market_offers.iter().position(|o| !o.is_buy);
         if let (Some(bi), Some(si)) = (buy_idx, sell_idx) {
-            let buy = world.economy.ge_offers[bi].clone();
-            let sell = world.economy.ge_offers[si].clone();
+            let buy = world.economy.market_offers[bi].clone();
+            let sell = world.economy.market_offers[si].clone();
             if buy.item_id == sell.item_id && buy.price_per >= sell.price_per {
                 let qty = buy.quantity.min(sell.quantity);
                 world
@@ -159,15 +168,20 @@ pub fn match_offers(world: &mut GameWorld) {
                     .entry(buy.item_id.0)
                     .or_default()
                     .push(sell.price_per);
-                world.economy.ge_offers[bi].quantity -= qty;
-                world.economy.ge_offers[si].quantity -= qty;
-                if world.economy.ge_offers[bi].quantity == 0 {
-                    world.economy.ge_offers.remove(bi);
+                world.economy.market_offers[bi].quantity -= qty;
+                world.economy.market_offers[si].quantity -= qty;
+                if world.economy.market_offers[bi].quantity == 0 {
+                    world.economy.market_offers.remove(bi);
                 }
-                if si < world.economy.ge_offers.len() && world.economy.ge_offers[si].quantity == 0 {
-                    world.economy.ge_offers.remove(si);
+                if si < world.economy.market_offers.len()
+                    && world.economy.market_offers[si].quantity == 0
+                {
+                    world.economy.market_offers.remove(si);
                 }
-                world.audit(&format!("GE matched {} x item {}", qty, buy.item_id.0));
+                world.audit(&format!(
+                    "Open Market matched {} x item {}",
+                    qty, buy.item_id.0
+                ));
                 continue;
             }
         }
@@ -178,9 +192,9 @@ pub fn match_offers(world: &mut GameWorld) {
     }
 }
 
-pub fn ge_update(world: &GameWorld) -> ServerMessage {
-    ServerMessage::GeUpdate {
-        offers: world.economy.ge_offers.clone(),
+pub fn open_market_update(world: &GameWorld) -> ServerMessage {
+    ServerMessage::OpenMarketUpdate {
+        offers: world.economy.market_offers.clone(),
     }
 }
 
@@ -202,7 +216,11 @@ pub fn assign_ledger_contract(world: &mut GameWorld, player_id: PlayerId) {
     }
 }
 
-pub fn complete_ledger_kill(world: &mut GameWorld, player_id: PlayerId, npc_id: openmmo_common::NpcId) {
+pub fn complete_ledger_kill(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    npc_id: openmmo_common::NpcId,
+) {
     if let Some(contract) = world.economy.ledger_contracts.get_mut(&player_id) {
         if contract.npc_id == npc_id && contract.remaining > 0 {
             contract.remaining -= 1;

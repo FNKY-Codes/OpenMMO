@@ -1,12 +1,12 @@
-use openmmo_common::{CombatStyle, EntityId, NpcState, PlayerState, Skill};
+use openmmo_common::{CombatStyle, NpcState, PlayerState, Skill};
 use rand::Rng;
 
 pub fn player_max_hit(player: &PlayerState, style: CombatStyle) -> u32 {
-    let prowess = player.skills.level(Skill::Prowess) as u32;
+    let combat = player.skills.level(Skill::Combat);
     let base = match style {
-        CombatStyle::Melee => prowess + 1,
-        CombatStyle::Ranged => prowess,
-        CombatStyle::Magic => player.skills.level(Skill::Arcana) as u32,
+        CombatStyle::Melee => combat + 1,
+        CombatStyle::Ranged => combat,
+        CombatStyle::Magic => player.skills.level(Skill::Electrics),
     };
     base.max(1)
 }
@@ -37,20 +37,20 @@ pub fn apply_damage_player(player: &mut PlayerState, amount: u32) {
 pub fn xp_for_damage(amount: u32, style: CombatStyle) -> (Skill, u64) {
     let xp = amount as u64 * 4;
     match style {
-        CombatStyle::Melee | CombatStyle::Ranged => (Skill::Prowess, xp),
-        CombatStyle::Magic => (Skill::Arcana, xp),
+        CombatStyle::Melee | CombatStyle::Ranged => (Skill::Combat, xp),
+        CombatStyle::Magic => (Skill::Electrics, xp),
     }
 }
 
 pub fn combat_fortitude(player: &PlayerState) -> u32 {
-    player.skills.level(Skill::Fortitude) as u32
+    player.skills.level(Skill::Resilience)
 }
 
 pub fn npc_attack_player(npc: &NpcState, player: &mut PlayerState) -> Option<u32> {
     if accuracy_roll(npc.prowess, combat_fortitude(player)) {
         let dmg = roll_damage(npc.prowess / 2 + 1);
         apply_damage_player(player, dmg);
-        player.skills.grant_xp(Skill::Fortitude, dmg as u64 * 2);
+        player.skills.grant_xp(Skill::Resilience, dmg as u64 * 2);
         Some(dmg)
     } else {
         None
@@ -63,12 +63,12 @@ pub fn player_attack_npc(
     style: CombatStyle,
 ) -> Option<u32> {
     let max_hit = player_max_hit(player, style);
-    if accuracy_roll(player.skills.level(Skill::Prowess) as u32, npc.fortitude) {
+    if accuracy_roll(player.skills.level(Skill::Combat), npc.fortitude) {
         let dmg = roll_damage(max_hit);
         apply_damage_npc(npc, dmg);
         let (skill, xp) = xp_for_damage(dmg, style);
         player.skills.grant_xp(skill, xp);
-        player.skills.grant_xp(Skill::Vitality, dmg as u64);
+        player.skills.grant_xp(Skill::Endurance, dmg as u64);
         Some(dmg)
     } else {
         None
@@ -83,6 +83,6 @@ pub fn cast_spell(
 ) -> Option<u32> {
     let dmg = roll_damage(max_hit);
     apply_damage_npc(npc, dmg);
-    player.skills.grant_xp(Skill::Arcana, xp);
+    player.skills.grant_xp(Skill::Electrics, xp);
     Some(dmg)
 }

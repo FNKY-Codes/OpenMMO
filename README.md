@@ -1,6 +1,6 @@
 # OpenMMO
 
-Open-source, OSRS-inspired tile-based MMO built with a custom Rust engine.
+Open-source, post-apocalyptic tile-based MMO built with a custom Rust engine.
 
 ## Prerequisites
 
@@ -43,9 +43,9 @@ deploy/       Docker Compose and SQL migrations
 docs/         Architecture, roadmap, and self-hosting guides
 ```
 
-## Skills (Original Taxonomy)
+## Skills (Wasteland Taxonomy)
 
-14 consolidated skills in 4 Callings: Vitality, Prowess, Fortitude, Harvest, Refinement, Arcana, and more.
+14 consolidated skills in 4 paths — Survival, Outlands, Workshop, and Operator — including Endurance, Combat, Resilience, Scavenging, Fabrication, Electrics, and more.
 
 ## Environment Variables
 

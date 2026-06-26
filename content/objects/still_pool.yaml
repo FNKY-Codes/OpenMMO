@@ -1,8 +1,8 @@
 id: 3
 name: Still Pool
 harvest_tag: water
-harvest_level: 1
-harvest_xp: 20
+scavenging_level: 1
+scavenging_xp: 20
 harvest_item: 6
-harvest_ticks: 3
+scavenging_ticks: 3
 depletes: false

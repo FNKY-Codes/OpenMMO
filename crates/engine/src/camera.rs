@@ -71,7 +71,8 @@ impl Camera {
     }
 
     pub fn view_projection(&self, width: u32, height: u32) -> Mat4 {
-        self.projection_matrix(width, height).mul(self.view_matrix())
+        self.projection_matrix(width, height)
+            .mul(self.view_matrix())
     }
 
     pub fn inverse_view_projection(&self, width: u32, height: u32) -> Mat4 {
@@ -80,7 +81,13 @@ impl Camera {
             .unwrap_or_else(Mat4::identity)
     }
 
-    pub fn pick_tile(&self, mouse_x: f32, mouse_y: f32, width: u32, height: u32) -> Option<TilePos> {
+    pub fn pick_tile(
+        &self,
+        mouse_x: f32,
+        mouse_y: f32,
+        width: u32,
+        height: u32,
+    ) -> Option<TilePos> {
         let inv_vp = self.inverse_view_projection(width, height);
         let (origin, dir) = math::screen_to_world_ray(
             mouse_x,

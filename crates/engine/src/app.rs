@@ -2,8 +2,8 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use egui_wgpu::wgpu;
 use egui_wgpu::Renderer as EguiRenderer;
-use egui_winit::State as EguiWinitState;
 use egui_winit::winit;
+use egui_winit::State as EguiWinitState;
 use openmmo_common::{RegionDef, WorldEntity};
 use openmmo_protocol::{ClientMessage, ServerMessage};
 
@@ -106,11 +106,9 @@ impl EngineApp {
                             self.input.mouse_x = position.x as f32;
                             self.input.mouse_y = position.y as f32;
 
-                            if !response.consumed && self.input.right_dragging {
+                            if !response.consumed && self.input.middle_dragging {
                                 let (dx, dy) = self.input.drag_delta();
-                                renderer
-                                    .camera_mut()
-                                    .rotate(-dx * 0.005, dy * 0.005);
+                                renderer.camera_mut().rotate(-dx * 0.005, dy * 0.005);
                             }
                         }
                         winit::event::WindowEvent::MouseInput { state, button, .. } => {
@@ -124,16 +122,16 @@ impl EngineApp {
                                     }
                                     (
                                         winit::event::ElementState::Pressed,
-                                        winit::event::MouseButton::Right,
+                                        winit::event::MouseButton::Middle,
                                     ) => {
-                                        self.input.right_dragging = true;
+                                        self.input.middle_dragging = true;
                                         self.input.begin_drag();
                                     }
                                     (
                                         winit::event::ElementState::Released,
-                                        winit::event::MouseButton::Right,
+                                        winit::event::MouseButton::Middle,
                                     ) => {
-                                        self.input.right_dragging = false;
+                                        self.input.middle_dragging = false;
                                     }
                                     _ => {}
                                 }
@@ -228,9 +226,7 @@ impl EngineApp {
                 self.entities = entities;
             }
             ServerMessage::InventoryUpdate {
-                inventory,
-                bank,
-                ..
+                inventory, bank, ..
             } => {
                 self.inventory = inventory;
                 self.bank = bank;
@@ -337,10 +333,7 @@ impl EngineApp {
                 });
             }
             UiAction::DropItem(slot) => {
-                self.send(ClientMessage::DropItem {
-                    slot,
-                    quantity: 1,
-                });
+                self.send(ClientMessage::DropItem { slot, quantity: 1 });
             }
             UiAction::Connect => {}
             UiAction::None => {}

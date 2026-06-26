@@ -1,0 +1,5 @@
+skill: fabrication
+branch: smith
+unlock_level: 25
+description: +10% Fabrication XP when smelting ore.
+xp_bonus_tag: ore
