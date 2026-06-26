@@ -1,7 +1,9 @@
-id: npc_1_callings
-text: Survival, Outlands, Workshop, and Operator paths all await. Scavenging feeds Fabrication. Combat protects Endurance.
+id: npc_100_callings
+text: Four callings shape survival here — Survival, Outlands, Workshop, and Operator. Each path unlocks different skills.
 options:
-  - label: I'll start my journey.
+  - label: Open supplies shop.
     action:
-      type: start_quest
-      quest_id: 1
+      type: open_shop
+      shop_id: starter_supplies
+  - label: Back.
+    next: npc_100

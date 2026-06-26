@@ -6,7 +6,7 @@ stages:
     description: Speak with the guide at spawn.
     objective:
       type: talk_to_npc
-      npc_id: 1
+      npc_id: 100
   - stage: 2
     description: Scavenge timber from a ruined birch node.
     objective:

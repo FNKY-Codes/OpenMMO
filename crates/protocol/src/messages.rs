@@ -29,6 +29,9 @@ pub enum ClientMessage {
         target: EntityId,
         style: openmmo_common::CombatStyle,
     },
+    TalkToNpc {
+        npc_entity: EntityId,
+    },
     CastSpell {
         target: EntityId,
         spell_id: String,
@@ -46,6 +49,17 @@ pub enum ClientMessage {
     },
     BankWithdraw {
         bank_slot: usize,
+        quantity: u32,
+    },
+    EquipItem {
+        inv_slot: usize,
+    },
+    UnequipItem {
+        slot: openmmo_common::EquipSlot,
+    },
+    ShopBuy {
+        shop_id: String,
+        item_id: ItemId,
         quantity: u32,
     },
     Chat {
@@ -185,9 +199,16 @@ pub enum ServerMessage {
         stage: u32,
         completed: bool,
     },
+    QuestJournal {
+        entries: Vec<(String, String)>,
+    },
     Dialogue {
         npc_entity: EntityId,
         node: openmmo_common::DialogueNode,
+    },
+    ShopOpen {
+        shop_id: String,
+        stock: Vec<openmmo_common::ShopStock>,
     },
     TradeUpdate {
         partner: String,

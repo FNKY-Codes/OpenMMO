@@ -1,4 +1,4 @@
-use openmmo_common::{EntityId, PlayerAction, PlayerId, Skill, TilePos};
+use openmmo_common::{EntityId, EquipSlot, HarvestTag, PlayerAction, PlayerId, Skill, TilePos, ToolTag};
 use openmmo_protocol::{ChatChannel, ClientMessage, LedgerContract, ServerMessage};
 use rand::Rng;
 
@@ -6,22 +6,41 @@ use crate::combat::{cast_spell, npc_attack_player, player_attack_npc};
 use crate::pathfinding::find_path;
 use crate::state::GameWorld;
 
-pub fn process_tick(world: &mut GameWorld) -> Vec<(PlayerId, ServerMessage)> {
+#[derive(Debug, Clone, Copy)]
+pub enum MessageTarget {
+    Player(PlayerId),
+    Broadcast,
+}
+
+pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)> {
     world.tick += 1;
     let mut messages = Vec::new();
 
     crate::anticheat::PluginApi::on_tick(world);
 
+    let mut moved_players = Vec::new();
     for player in world.players.values_mut() {
         if let PlayerAction::Walking { path, index } = &mut player.action {
             if *index + 1 < path.len() {
                 *index += 1;
                 player.position = path[*index];
+                player.last_position = player.position;
+                player.ticks_stationary = 1;
+                moved_players.push((player.id, player.position));
             } else {
                 player.action = PlayerAction::Idle;
             }
+        } else {
+            player.ticks_stationary = player.ticks_stationary.saturating_add(1);
         }
     }
+    for (pid, pos) in moved_players {
+        for msg in crate::quest::on_visit_tile(world, pid, pos) {
+            messages.push((MessageTarget::Player(pid), msg));
+        }
+    }
+
+    tick_npc_ai(world, &mut messages);
 
     tick_scavenge(world, &mut messages);
     tick_refine(world, &mut messages);
@@ -41,64 +60,142 @@ pub fn handle_client_message(
     world: &mut GameWorld,
     player_id: PlayerId,
     msg: ClientMessage,
-) -> Vec<ServerMessage> {
+) -> Vec<(MessageTarget, ServerMessage)> {
     let mut out = Vec::new();
+    let route = |msg: ServerMessage| (MessageTarget::Player(player_id), msg);
+    let broadcast = |msg: ServerMessage| (MessageTarget::Broadcast, msg);
     match msg {
         ClientMessage::Login { .. } => {}
         ClientMessage::WalkIntent { target } => {
             if let Some(resp) = handle_walk(world, player_id, target) {
-                out.push(resp);
+                out.push(route(resp));
             }
         }
         ClientMessage::Scavenge { object_entity } => {
-            out.extend(handle_scavenge(world, player_id, object_entity));
+            out.extend(
+                handle_scavenge(world, player_id, object_entity)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::InteractObject { object_entity } => {
-            out.extend(handle_scavenge(world, player_id, object_entity));
+            out.extend(
+                handle_scavenge(world, player_id, object_entity)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::Refine { recipe_id } => {
-            out.extend(handle_refine(world, player_id, &recipe_id));
+            out.extend(
+                handle_refine(world, player_id, &recipe_id)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::Attack { target, style } => {
-            out.extend(handle_attack(world, player_id, target, style));
+            out.extend(
+                handle_attack(world, player_id, target, style)
+                    .into_iter()
+                    .map(route),
+            );
+        }
+        ClientMessage::TalkToNpc { npc_entity } => {
+            out.extend(
+                crate::quest::handle_talk_to_npc(world, player_id, npc_entity)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::CastSpell { target, spell_id } => {
-            out.extend(handle_spell(world, player_id, target, &spell_id));
+            out.extend(
+                handle_spell(world, player_id, target, &spell_id)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::PickupItem { ground_entity } => {
-            out.extend(handle_pickup(world, player_id, ground_entity));
+            out.extend(
+                handle_pickup(world, player_id, ground_entity)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::DropItem { slot, quantity } => {
-            out.extend(handle_drop(world, player_id, slot, quantity));
+            out.extend(
+                handle_drop(world, player_id, slot, quantity)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::BankDeposit { inv_slot, quantity } => {
-            out.extend(handle_bank_deposit(world, player_id, inv_slot, quantity));
+            out.extend(
+                handle_bank_deposit(world, player_id, inv_slot, quantity)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::BankWithdraw {
             bank_slot,
             quantity,
         } => {
-            out.extend(handle_bank_withdraw(world, player_id, bank_slot, quantity));
+            out.extend(
+                handle_bank_withdraw(world, player_id, bank_slot, quantity)
+                    .into_iter()
+                    .map(route),
+            );
+        }
+        ClientMessage::EquipItem { inv_slot } => {
+            out.extend(
+                handle_equip(world, player_id, inv_slot)
+                    .into_iter()
+                    .map(route),
+            );
+        }
+        ClientMessage::UnequipItem { slot } => {
+            out.extend(
+                handle_unequip(world, player_id, slot)
+                    .into_iter()
+                    .map(route),
+            );
+        }
+        ClientMessage::ShopBuy {
+            shop_id,
+            item_id,
+            quantity,
+        } => {
+            out.extend(
+                handle_shop_buy(world, player_id, &shop_id, item_id, quantity)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::Chat { channel, message } => {
-            out.extend(handle_chat(world, player_id, channel, message));
+            out.extend(
+                handle_chat(world, player_id, channel, message)
+                    .into_iter()
+                    .map(broadcast),
+            );
         }
         ClientMessage::TradeRequest { target_player } => {
-            out.extend(crate::economy::handle_trade_request(
-                world,
-                player_id,
-                target_player,
-            ));
+            out.extend(
+                crate::economy::handle_trade_request(world, player_id, target_player)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::TradeOffer { target, items } => {
-            out.extend(crate::economy::handle_trade_offer(
-                world, player_id, target, items,
-            ));
+            out.extend(
+                crate::economy::handle_trade_offer(world, player_id, target, items)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::TradeAccept { target } => {
-            out.extend(crate::economy::handle_trade_accept(
-                world, player_id, target,
-            ));
+            out.extend(
+                crate::economy::handle_trade_accept(world, player_id, target)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::MarketPlaceOffer {
             item_id,
@@ -106,33 +203,46 @@ pub fn handle_client_message(
             price_per,
             is_buy,
         } => {
-            out.extend(crate::economy::handle_market_offer(
-                world, player_id, item_id, quantity, price_per, is_buy,
-            ));
+            out.extend(
+                crate::economy::handle_market_offer(
+                    world, player_id, item_id, quantity, price_per, is_buy,
+                )
+                .into_iter()
+                .map(route),
+            );
         }
         ClientMessage::MarketCancelOffer { offer_id } => {
-            out.extend(crate::economy::handle_market_cancel(
-                world, player_id, offer_id,
-            ));
+            out.extend(
+                crate::economy::handle_market_cancel(world, player_id, offer_id)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::FriendAdd { name } => {
-            out.extend(crate::social::handle_friend_add(world, player_id, name));
+            out.extend(
+                crate::social::handle_friend_add(world, player_id, name)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::PrivateMessage { to, message } => {
-            out.extend(crate::social::handle_private_message(
-                world, player_id, to, message,
-            ));
+            out.extend(
+                crate::social::handle_private_message(world, player_id, to, message)
+                    .into_iter()
+                    .map(|(pid, msg)| (MessageTarget::Player(pid), msg)),
+            );
         }
         ClientMessage::DialogueSelect {
             npc_entity,
             option_index,
         } => {
-            out.extend(crate::quest::handle_dialogue_select(
-                world,
-                player_id,
-                npc_entity,
-                option_index,
-            ));
+            out.extend(
+                crate::quest::handle_dialogue_select(
+                    world, player_id, npc_entity, option_index,
+                )
+                .into_iter()
+                .map(route),
+            );
         }
         ClientMessage::SelectSpecialization { skill, branch } => {
             if let Some(p) = world.players.get_mut(&player_id) {
@@ -140,14 +250,20 @@ pub fn handle_client_message(
             }
         }
         ClientMessage::JoinMinigame { minigame_id } => {
-            out.extend(crate::minigame::handle_join(world, player_id, minigame_id));
+            out.extend(
+                crate::minigame::handle_join(world, player_id, minigame_id)
+                    .into_iter()
+                    .map(route),
+            );
         }
         ClientMessage::ModeratorCommand { command } => {
-            out.extend(crate::anticheat::handle_mod_command(
-                world, player_id, command,
-            ));
+            out.extend(
+                crate::anticheat::handle_mod_command(world, player_id, command)
+                    .into_iter()
+                    .map(route),
+            );
         }
-        ClientMessage::Ping => out.push(ServerMessage::Pong),
+        ClientMessage::Ping => out.push(route(ServerMessage::Pong)),
     }
     out
 }
@@ -164,9 +280,17 @@ fn handle_walk(
             message: "Invalid movement".into(),
         });
     }
+    if crate::anticheat::detect_speed_hack(player.last_position, target, player.ticks_stationary) {
+        world.audit(&format!("Speed hack detected for {player_id:?}"));
+        world.remove_player(player_id);
+        return Some(ServerMessage::Error {
+            message: "Movement rejected".into(),
+        });
+    }
     let path = find_path(player.position, target, &walkable);
     if path.len() > 1 {
         player.action = PlayerAction::Walking { path, index: 0 };
+        player.ticks_stationary = 0;
     }
     None
 }
@@ -197,6 +321,20 @@ fn handle_scavenge(
         return vec![ServerMessage::Error {
             message: format!("Need Scavenging level {}", def.scavenging_level),
         }];
+    }
+    if let Some(required_tool) = def.harvest_tag.and_then(|tag| tool_for_harvest(tag)) {
+        let has_tool = player.inventory.slots.iter().flatten().any(|slot| {
+            world
+                .content
+                .item(slot.item_id)
+                .and_then(|i| i.tool_tag)
+                .is_some_and(|t| t == required_tool)
+        }) || player_has_equipped_tool(player, required_tool, &world.content);
+        if !has_tool {
+            return vec![ServerMessage::Error {
+                message: format!("Need {:?} tool", required_tool),
+            }];
+        }
     }
     player.action = PlayerAction::Scavenging {
         object_entity,
@@ -464,7 +602,7 @@ fn handle_chat(
     crate::social::broadcast_chat(world, channel, name, message)
 }
 
-fn tick_scavenge(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessage)>) {
+fn tick_scavenge(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerMessage)>) {
     let player_ids: Vec<PlayerId> = world.players.keys().copied().collect();
     for pid in player_ids {
         let action = world.players.get(&pid).map(|p| p.action.clone());
@@ -491,7 +629,7 @@ fn complete_scavenge(
     world: &mut GameWorld,
     player_id: PlayerId,
     object_entity: EntityId,
-    messages: &mut Vec<(PlayerId, ServerMessage)>,
+    messages: &mut Vec<(MessageTarget, ServerMessage)>,
 ) {
     let obj_state = match world.objects.get(&object_entity) {
         Some(o) => o.clone(),
@@ -501,45 +639,55 @@ fn complete_scavenge(
         Some(d) => d.clone(),
         None => return,
     };
-    let player = match world.players.get_mut(&player_id) {
-        Some(p) => p,
-        None => return,
+    let levels = {
+        let player = match world.players.get_mut(&player_id) {
+            Some(p) => p,
+            None => return,
+        };
+        player.action = PlayerAction::Idle;
+        let levels = player.skills.grant_xp(Skill::Scavenging, def.scavenging_xp);
+        if let Some(item_id) = def.harvest_item {
+            let stackable = world
+                .content
+                .item(item_id)
+                .map(|i| i.stackable)
+                .unwrap_or(true);
+            let _ = player.inventory.add_item(item_id, 1, stackable);
+            messages.push((
+                MessageTarget::Player(player_id),
+                ServerMessage::CollectionLogEntry {
+                    item_id,
+                    source: def.name.clone(),
+                },
+            ));
+        }
+        messages.push((MessageTarget::Player(player_id), inventory_update(player)));
+        messages.push((
+            MessageTarget::Player(player_id),
+            ServerMessage::XpDrop {
+                skill: Skill::Scavenging,
+                amount: def.scavenging_xp,
+            },
+        ));
+        levels
     };
-    player.action = PlayerAction::Idle;
-    let levels = player.skills.grant_xp(Skill::Scavenging, def.scavenging_xp);
-    if let Some(item_id) = def.harvest_item {
-        let stackable = world
-            .content
-            .item(item_id)
-            .map(|i| i.stackable)
-            .unwrap_or(true);
-        let _ = player.inventory.add_item(item_id, 1, stackable);
-        messages.push((
-            player_id,
-            ServerMessage::CollectionLogEntry {
-                item_id,
-                source: def.name.clone(),
-            },
-        ));
-    }
-    messages.push((player_id, inventory_update(player)));
-    messages.push((
-        player_id,
-        ServerMessage::XpDrop {
-            skill: Skill::Scavenging,
-            amount: def.scavenging_xp,
-        },
-    ));
     for lvl in levels {
-        messages.push((
-            player_id,
-            ServerMessage::SkillUpdate {
-                skills: player.skills.clone(),
-                levels_gained: vec![(Skill::Scavenging, lvl)],
-            },
-        ));
+        if let Some(player) = world.players.get(&player_id) {
+            messages.push((
+                MessageTarget::Player(player_id),
+                ServerMessage::SkillUpdate {
+                    skills: player.skills.clone(),
+                    levels_gained: vec![(Skill::Scavenging, lvl)],
+                },
+            ));
+        }
+        crate::quest::on_skill_level(world, player_id, Skill::Scavenging, lvl)
+            .into_iter()
+            .for_each(|msg| messages.push((MessageTarget::Player(player_id), msg)));
     }
-    crate::quest::on_harvest(world, player_id, def.harvest_tag);
+    crate::quest::on_harvest(world, player_id, def.harvest_tag)
+        .into_iter()
+        .for_each(|msg| messages.push((MessageTarget::Player(player_id), msg)));
     if def.depletes {
         if let Some(o) = world.objects.get_mut(&object_entity) {
             o.depleted = true;
@@ -548,7 +696,7 @@ fn complete_scavenge(
     }
 }
 
-fn tick_refine(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessage)>) {
+fn tick_refine(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerMessage)>) {
     let player_ids: Vec<PlayerId> = world.players.keys().copied().collect();
     for pid in player_ids {
         let action = world.players.get(&pid).map(|p| p.action.clone());
@@ -575,67 +723,77 @@ fn complete_refine(
     world: &mut GameWorld,
     player_id: PlayerId,
     recipe_id: &str,
-    messages: &mut Vec<(PlayerId, ServerMessage)>,
+    messages: &mut Vec<(MessageTarget, ServerMessage)>,
 ) {
     let recipe = match world.content.recipe(recipe_id) {
         Some(r) => r.clone(),
         None => return,
     };
-    let player = match world.players.get_mut(&player_id) {
-        Some(p) => p,
-        None => return,
-    };
-    for input in &recipe.inputs {
-        let mut remaining = input.quantity;
-        for slot in &mut player.inventory.slots {
-            if let Some(s) = slot {
-                if s.item_id == input.item_id {
-                    let take = remaining.min(s.quantity);
-                    s.quantity -= take;
-                    remaining -= take;
-                    if s.quantity == 0 {
-                        *slot = None;
-                    }
-                    if remaining == 0 {
-                        break;
+    let levels = {
+        let player = match world.players.get_mut(&player_id) {
+            Some(p) => p,
+            None => return,
+        };
+        for input in &recipe.inputs {
+            let mut remaining = input.quantity;
+            for slot in &mut player.inventory.slots {
+                if let Some(s) = slot {
+                    if s.item_id == input.item_id {
+                        let take = remaining.min(s.quantity);
+                        s.quantity -= take;
+                        remaining -= take;
+                        if s.quantity == 0 {
+                            *slot = None;
+                        }
+                        if remaining == 0 {
+                            break;
+                        }
                     }
                 }
             }
         }
-    }
-    let stackable = world
-        .content
-        .item(recipe.output)
-        .map(|i| i.stackable)
-        .unwrap_or(true);
-    let _ = player
-        .inventory
-        .add_item(recipe.output, recipe.output_qty, stackable);
-    let levels = player
-        .skills
-        .grant_xp(Skill::Fabrication, recipe.fabrication_xp);
-    player.action = PlayerAction::Idle;
-    messages.push((player_id, inventory_update(player)));
-    messages.push((
-        player_id,
-        ServerMessage::XpDrop {
-            skill: Skill::Fabrication,
-            amount: recipe.fabrication_xp,
-        },
-    ));
-    for lvl in levels {
+        let stackable = world
+            .content
+            .item(recipe.output)
+            .map(|i| i.stackable)
+            .unwrap_or(true);
+        let _ = player
+            .inventory
+            .add_item(recipe.output, recipe.output_qty, stackable);
+        let levels = player
+            .skills
+            .grant_xp(Skill::Fabrication, recipe.fabrication_xp);
+        player.action = PlayerAction::Idle;
+        messages.push((MessageTarget::Player(player_id), inventory_update(player)));
         messages.push((
-            player_id,
-            ServerMessage::SkillUpdate {
-                skills: player.skills.clone(),
-                levels_gained: vec![(Skill::Fabrication, lvl)],
+            MessageTarget::Player(player_id),
+            ServerMessage::XpDrop {
+                skill: Skill::Fabrication,
+                amount: recipe.fabrication_xp,
             },
         ));
+        levels
+    };
+    for lvl in levels {
+        if let Some(player) = world.players.get(&player_id) {
+            messages.push((
+                MessageTarget::Player(player_id),
+                ServerMessage::SkillUpdate {
+                    skills: player.skills.clone(),
+                    levels_gained: vec![(Skill::Fabrication, lvl)],
+                },
+            ));
+        }
+        crate::quest::on_skill_level(world, player_id, Skill::Fabrication, lvl)
+            .into_iter()
+            .for_each(|msg| messages.push((MessageTarget::Player(player_id), msg)));
     }
-    crate::quest::on_refine(world, player_id, recipe_id);
+    crate::quest::on_refine(world, player_id, recipe_id)
+        .into_iter()
+        .for_each(|msg| messages.push((MessageTarget::Player(player_id), msg)));
 }
 
-fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessage)>) {
+fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerMessage)>) {
     let player_actions: Vec<(PlayerId, PlayerAction)> = world
         .players
         .iter()
@@ -643,6 +801,7 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessag
         .collect();
 
     for (pid, action) in player_actions {
+        let content = world.content.clone();
         match action {
             PlayerAction::Combat { target, style } => {
                 let mut rng = rand::thread_rng();
@@ -658,10 +817,10 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessag
                         if let (Some(player), Some(npc)) =
                             (world.players.get_mut(&pid), world.npcs.get_mut(&target))
                         {
-                            if let Some(dmg) = player_attack_npc(player, npc, style) {
+                            if let Some(dmg) = player_attack_npc(player, npc, style, &content) {
                                 if let Some(eid) = player_eid {
                                     messages.push((
-                                        pid,
+                                        MessageTarget::Player(pid),
                                         ServerMessage::Damage {
                                             source: eid,
                                             target,
@@ -676,14 +835,16 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessag
                                 drop(player);
                                 if npc_dead {
                                     messages.push((
-                                        pid,
+                                        MessageTarget::Player(pid),
                                         ServerMessage::Death {
                                             entity: target,
                                             killer: player_eid,
                                         },
                                     ));
                                     handle_npc_loot(world, pid, target, messages);
-                                    crate::quest::on_kill(world, pid, npc_id_copy);
+                                    crate::quest::on_kill(world, pid, npc_id_copy)
+                                        .into_iter()
+                                        .for_each(|msg| messages.push((MessageTarget::Player(pid), msg)));
                                 }
                             }
                         }
@@ -700,9 +861,9 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessag
                             (world.npcs.get(&target), world.players.get_mut(&pid))
                         {
                             let player_eid = player.entity_id;
-                            if let Some(dmg) = npc_attack_player(npc, player) {
+                            if let Some(dmg) = npc_attack_player(npc, player, &content) {
                                 messages.push((
-                                    pid,
+                                    MessageTarget::Player(pid),
                                     ServerMessage::Damage {
                                         source: target,
                                         target: player_eid,
@@ -740,7 +901,7 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessag
                     let npc_dead =
                         if let Some(dmg) = cast_spell(player, npc, spell.max_hit, spell.xp) {
                             messages.push((
-                                pid,
+                                MessageTarget::Player(pid),
                                 ServerMessage::Damage {
                                     source: player_eid,
                                     target,
@@ -768,7 +929,7 @@ fn handle_npc_loot(
     world: &mut GameWorld,
     player_id: PlayerId,
     npc_entity: EntityId,
-    messages: &mut Vec<(PlayerId, ServerMessage)>,
+    messages: &mut Vec<(MessageTarget, ServerMessage)>,
 ) {
     let npc = match world.npcs.get(&npc_entity) {
         Some(n) => n.clone(),
@@ -797,7 +958,7 @@ fn handle_npc_loot(
         }
     }
     if !loot.is_empty() {
-        messages.push((player_id, ServerMessage::LootSpawn { items: loot }));
+        messages.push((MessageTarget::Player(player_id), ServerMessage::LootSpawn { items: loot }));
     }
     if let Some(npc) = world.npcs.get_mut(&npc_entity) {
         npc.respawn_ticks = def.respawn_ticks;
@@ -807,7 +968,7 @@ fn handle_npc_loot(
 fn respawn_player(
     world: &mut GameWorld,
     player_id: PlayerId,
-    messages: &mut Vec<(PlayerId, ServerMessage)>,
+    messages: &mut Vec<(MessageTarget, ServerMessage)>,
 ) {
     let spawn = world
         .content
@@ -817,7 +978,7 @@ fn respawn_player(
         .unwrap_or(TilePos::new(5, 5));
     if let Some(player) = world.players.get_mut(&player_id) {
         messages.push((
-            player_id,
+            MessageTarget::Player(player_id),
             ServerMessage::Death {
                 entity: player.entity_id,
                 killer: None,
@@ -880,23 +1041,31 @@ fn tick_ground_items(world: &mut GameWorld) {
     }
 }
 
-fn tick_minigame(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessage)>) {
-    crate::minigame::tick(world, messages);
+fn tick_minigame(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerMessage)>) {
+    let mut inner = Vec::new();
+    crate::minigame::tick(world, &mut inner);
+    for (pid, msg) in inner {
+        messages.push((MessageTarget::Player(pid), msg));
+    }
 }
 
-fn tick_boss(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessage)>) {
-    crate::minigame::tick_boss(world, messages);
+fn tick_boss(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerMessage)>) {
+    let mut inner = Vec::new();
+    crate::minigame::tick_boss(world, &mut inner);
+    for (pid, msg) in inner {
+        messages.push((MessageTarget::Player(pid), msg));
+    }
 }
 
 fn tick_economy(world: &mut GameWorld) {
     crate::economy::match_offers(world);
 }
 
-fn tick_ledger_contracts(world: &mut GameWorld, messages: &mut Vec<(PlayerId, ServerMessage)>) {
+fn tick_ledger_contracts(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerMessage)>) {
     for player in world.players.values() {
         if let Some(contract) = world.economy.ledger_contracts.get(&player.id) {
             messages.push((
-                player.id,
+                MessageTarget::Player(player.id),
                 ServerMessage::LedgerUpdate {
                     rank: player.ledger_rank,
                     points: player.ledger_points,
@@ -925,5 +1094,269 @@ pub fn snapshot_message(world: &GameWorld, local: Option<PlayerId>) -> ServerMes
         tick: world.tick,
         entities: world.entities_snapshot(),
         local_player: local,
+    }
+}
+
+fn tool_for_harvest(tag: HarvestTag) -> Option<ToolTag> {
+    match tag {
+        HarvestTag::Timber => Some(ToolTag::Axe),
+        HarvestTag::Ore => Some(ToolTag::Pick),
+        HarvestTag::Water => Some(ToolTag::Rod),
+        HarvestTag::Flora => Some(ToolTag::Knife),
+    }
+}
+
+fn player_has_equipped_tool(
+    player: &openmmo_common::PlayerState,
+    tool: ToolTag,
+    content: &openmmo_common::ContentPack,
+) -> bool {
+    let slots = [
+        player.equipment.weapon.as_ref(),
+        player.equipment.shield.as_ref(),
+    ];
+    slots.into_iter().flatten().any(|slot| {
+        content
+            .item(slot.item_id)
+            .and_then(|i| i.tool_tag)
+            .is_some_and(|t| t == tool)
+    })
+}
+
+fn handle_equip(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    inv_slot: usize,
+) -> Vec<ServerMessage> {
+    let item_id = {
+        let player = match world.players.get(&player_id) {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
+        let slot = match player.inventory.slots.get(inv_slot) {
+            Some(Some(s)) => s,
+            _ => return Vec::new(),
+        };
+        slot.item_id
+    };
+    let def = match world.content.item(item_id) {
+        Some(d) => d.clone(),
+        None => return Vec::new(),
+    };
+    let equip_slot = match def.equip_slot {
+        Some(s) => s,
+        None => {
+            return vec![ServerMessage::Error {
+                message: "Item is not equippable".into(),
+            }];
+        }
+    };
+    let player = match world.players.get_mut(&player_id) {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+    let removed = player.inventory.slots[inv_slot].take();
+    let Some(removed) = removed else {
+        return Vec::new();
+    };
+    let target = match equip_slot {
+        EquipSlot::Head => &mut player.equipment.head,
+        EquipSlot::Body => &mut player.equipment.body,
+        EquipSlot::Legs => &mut player.equipment.legs,
+        EquipSlot::Weapon => &mut player.equipment.weapon,
+        EquipSlot::Shield => &mut player.equipment.shield,
+    };
+    if let Some(prev) = target.take() {
+        let stackable = world
+            .content
+            .item(prev.item_id)
+            .map(|i| i.stackable)
+            .unwrap_or(true);
+        let _ = player.inventory.add_item(prev.item_id, prev.quantity, stackable);
+    }
+    *target = Some(removed);
+    vec![inventory_update(player)]
+}
+
+fn handle_unequip(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    slot: EquipSlot,
+) -> Vec<ServerMessage> {
+    let mut ground_item = None;
+    {
+        let player = match world.players.get_mut(&player_id) {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
+        let equipped = match slot {
+            EquipSlot::Head => player.equipment.head.take(),
+            EquipSlot::Body => player.equipment.body.take(),
+            EquipSlot::Legs => player.equipment.legs.take(),
+            EquipSlot::Weapon => player.equipment.weapon.take(),
+            EquipSlot::Shield => player.equipment.shield.take(),
+        };
+        let Some(item) = equipped else {
+            return Vec::new();
+        };
+        let stackable = world
+            .content
+            .item(item.item_id)
+            .map(|i| i.stackable)
+            .unwrap_or(true);
+        let leftover = player
+            .inventory
+            .add_item(item.item_id, item.quantity, stackable);
+        if leftover > 0 {
+            ground_item = Some((item.item_id, leftover, player.position));
+        }
+    }
+    if let Some((item_id, quantity, position)) = ground_item {
+        let eid = world.alloc_entity();
+        world.ground_items.insert(
+            eid,
+            openmmo_common::GroundItem {
+                entity_id: eid,
+                item_id,
+                quantity,
+                position,
+                despawn_ticks: 200,
+            },
+        );
+    }
+    world
+        .players
+        .get(&player_id)
+        .map(inventory_update)
+        .into_iter()
+        .collect()
+}
+
+fn handle_shop_buy(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    shop_id: &str,
+    item_id: openmmo_common::ItemId,
+    quantity: u32,
+) -> Vec<ServerMessage> {
+    let shop = match world.content.shops.iter().find(|s| s.id == shop_id) {
+        Some(s) => s.clone(),
+        None => {
+            return vec![ServerMessage::Error {
+                message: "Unknown shop".into(),
+            }];
+        }
+    };
+    let stock = match shop.stock.iter().find(|s| s.item_id == item_id) {
+        Some(s) => s.clone(),
+        None => {
+            return vec![ServerMessage::Error {
+                message: "Item not in stock".into(),
+            }];
+        }
+    };
+    let total_cost = stock.price.saturating_mul(quantity);
+    let player = match world.players.get_mut(&player_id) {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+    let coins = player
+        .inventory
+        .slots
+        .iter()
+        .flatten()
+        .filter(|s| s.item_id.0 == 1)
+        .map(|s| s.quantity)
+        .sum::<u32>();
+    if coins < total_cost {
+        return vec![ServerMessage::Error {
+            message: "Not enough currency".into(),
+        }];
+    }
+    let mut remaining_cost = total_cost;
+    for slot in player.inventory.slots.iter_mut() {
+        if let Some(s) = slot {
+            if s.item_id.0 == 1 && remaining_cost > 0 {
+                let take = remaining_cost.min(s.quantity);
+                s.quantity -= take;
+                remaining_cost -= take;
+                if s.quantity == 0 {
+                    *slot = None;
+                }
+            }
+        }
+    }
+    let stackable = world
+        .content
+        .item(item_id)
+        .map(|i| i.stackable)
+        .unwrap_or(true);
+    let _ = player.inventory.add_item(item_id, quantity, stackable);
+    vec![inventory_update(player)]
+}
+
+fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerMessage)>) {
+    let npc_snapshots: Vec<_> = world
+        .npcs
+        .iter()
+        .filter(|(_, n)| n.alive)
+        .map(|(eid, n)| (*eid, n.npc_id, n.position, n.aggro_target))
+        .collect();
+    for (entity_id, npc_id, mut npc_pos, aggro_target) in npc_snapshots {
+        let def = match world.content.npc(npc_id) {
+            Some(d) => d.clone(),
+            None => continue,
+        };
+        if def.aggro_range == 0 {
+            continue;
+        }
+        let mut target_player = aggro_target;
+        if target_player.is_none() {
+            for (pid, player) in &world.players {
+                if player.position.chebyshev_distance(&npc_pos) <= def.aggro_range {
+                    target_player = Some(*pid);
+                    break;
+                }
+            }
+        }
+        let Some(target_pid) = target_player else {
+            continue;
+        };
+        if let Some(npc) = world.npcs.get_mut(&entity_id) {
+            npc.aggro_target = Some(target_pid);
+        }
+        let player_pos = world
+            .players
+            .get(&target_pid)
+            .map(|p| p.position)
+            .unwrap_or(npc_pos);
+        if npc_pos.chebyshev_distance(&player_pos) > 1 {
+            let dx = (player_pos.x - npc_pos.x).clamp(-1, 1);
+            let dy = (player_pos.y - npc_pos.y).clamp(-1, 1);
+            let next = TilePos::new(npc_pos.x + dx, npc_pos.y + dy);
+            if world.is_walkable(next) {
+                npc_pos = next;
+                if let Some(npc) = world.npcs.get_mut(&entity_id) {
+                    npc.position = next;
+                }
+            }
+        } else if let (Some(npc), Some(player)) = (
+            world.npcs.get(&entity_id),
+            world.players.get_mut(&target_pid),
+        ) {
+            let content = world.content.clone();
+            let player_eid = player.entity_id;
+            if let Some(dmg) = crate::combat::npc_attack_player(npc, player, &content) {
+                messages.push((
+                    MessageTarget::Player(target_pid),
+                    ServerMessage::Damage {
+                        source: entity_id,
+                        target: player_eid,
+                        amount: dmg,
+                        style: openmmo_common::CombatStyle::Melee,
+                    },
+                ));
+            }
+        }
     }
 }

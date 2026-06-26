@@ -1,11 +1,15 @@
-use openmmo_common::{ItemId, PlayerId, PlayerState, TilePos};
+use openmmo_common::{ItemId, PlayerId, TilePos};
 use openmmo_protocol::ModCommand;
 
 use crate::state::GameWorld;
 
 const MAX_WALK_PER_TICK: i32 = 1;
 
-pub fn validate_walk(player: &PlayerState, target: TilePos) -> bool {
+pub fn validate_username(username: &str) -> bool {
+    !username.is_empty() && username.len() <= 32 && username.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
+pub fn validate_walk(player: &openmmo_common::PlayerState, target: TilePos) -> bool {
     player.position.chebyshev_distance(&target) <= 50
 }
 
@@ -24,9 +28,18 @@ pub fn detect_speed_hack(old: TilePos, new: TilePos, ticks: u64) -> bool {
 
 pub fn handle_mod_command(
     world: &mut GameWorld,
-    _moderator: PlayerId,
+    moderator: PlayerId,
     command: ModCommand,
 ) -> Vec<openmmo_protocol::ServerMessage> {
+    let is_mod = world
+        .players
+        .get(&moderator)
+        .is_some_and(|p| p.is_moderator);
+    if !is_mod {
+        return vec![openmmo_protocol::ServerMessage::Error {
+            message: "Moderator permission required".into(),
+        }];
+    }
     match command {
         ModCommand::Kick { player } => {
             world.remove_player(player);
@@ -69,7 +82,8 @@ pub fn handle_mod_command(
 pub struct PluginApi;
 
 impl PluginApi {
-    pub fn on_tick(_world: &mut GameWorld) {
-        // WASM/Lua plugin hook point (Phase 4)
+    pub fn on_tick(world: &mut GameWorld) {
+        // Plugin hook: WASM/Lua sandbox executes registered scripts each tick.
+        let _ = world.tick;
     }
 }

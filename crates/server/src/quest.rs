@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use openmmo_common::{EntityId, HarvestTag, PlayerId, QuestId};
+use openmmo_common::{EntityId, HarvestTag, NpcId, PlayerId, QuestId, QuestObjective, Skill, TilePos};
 use openmmo_protocol::ServerMessage;
 
 use crate::economy::complete_ledger_kill;
@@ -17,6 +17,32 @@ impl QuestEngine {
             self.dialogue_index.insert(d.id.clone(), d.clone());
         }
     }
+}
+
+pub fn handle_talk_to_npc(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    npc_entity: EntityId,
+) -> Vec<ServerMessage> {
+    let npc_id = world.npcs.get(&npc_entity).map(|n| n.npc_id);
+    let Some(npc_id) = npc_id else {
+        return Vec::new();
+    };
+    let def = world.content.npc(npc_id);
+    if def.is_some_and(|d| d.aggro_range > 0) {
+        return Vec::new();
+    }
+    let dialogue_id = format!("npc_{}", npc_id.0);
+    let node = world.quests.dialogue_index.get(&dialogue_id).cloned();
+    if let Some(node) = node {
+        let mut out = on_talk_to_npc(world, player_id, npc_id);
+        out.push(ServerMessage::Dialogue {
+            npc_entity,
+            node,
+        });
+        return out;
+    }
+    on_talk_to_npc(world, player_id, npc_id)
 }
 
 pub fn handle_dialogue_select(
@@ -43,6 +69,14 @@ pub fn handle_dialogue_select(
                     completed: false,
                 }];
             }
+            if let Some(openmmo_common::DialogueAction::OpenShop { shop_id }) = &opt.action {
+                if let Some(shop) = world.content.shops.iter().find(|s| s.id == *shop_id) {
+                    return vec![ServerMessage::ShopOpen {
+                        shop_id: shop_id.clone(),
+                        stock: shop.stock.clone(),
+                    }];
+                }
+            }
             if let Some(next) = &opt.next {
                 if let Some(next_node) = world.quests.dialogue_index.get(next) {
                     return vec![ServerMessage::Dialogue {
@@ -56,44 +90,103 @@ pub fn handle_dialogue_select(
     Vec::new()
 }
 
-pub fn on_harvest(world: &mut GameWorld, player_id: PlayerId, tag: Option<HarvestTag>) {
-    let Some(tag) = tag else { return };
+pub fn on_harvest(world: &mut GameWorld, player_id: PlayerId, tag: Option<HarvestTag>) -> Vec<ServerMessage> {
+    let Some(tag) = tag else {
+        return Vec::new();
+    };
     advance_quests(world, player_id, |obj| {
-        if let openmmo_common::QuestObjective::Harvest { tag: t, count } = obj {
-            *t == tag
-        } else {
-            false
-        }
-    });
+        matches!(obj, QuestObjective::Harvest { tag: t, .. } if *t == tag)
+    })
 }
 
-pub fn on_refine(world: &mut GameWorld, player_id: PlayerId, recipe_id: &str) {
+pub fn on_refine(world: &mut GameWorld, player_id: PlayerId, recipe_id: &str) -> Vec<ServerMessage> {
     let rid = recipe_id.to_string();
     advance_quests(world, player_id, |obj| {
-        if let openmmo_common::QuestObjective::Refine { recipe_id, .. } = obj {
-            recipe_id == &rid
-        } else {
-            false
-        }
-    });
+        matches!(obj, QuestObjective::Refine { recipe_id, .. } if recipe_id == &rid)
+    })
 }
 
-pub fn on_kill(world: &mut GameWorld, player_id: PlayerId, npc_id: openmmo_common::NpcId) {
+pub fn on_kill(world: &mut GameWorld, player_id: PlayerId, npc_id: NpcId) -> Vec<ServerMessage> {
     complete_ledger_kill(world, player_id, npc_id);
     advance_quests(world, player_id, |obj| {
-        if let openmmo_common::QuestObjective::KillNpc { npc_id: id, .. } = obj {
-            *id == npc_id
-        } else {
-            false
+        matches!(obj, QuestObjective::KillNpc { npc_id: id, .. } if *id == npc_id)
+    })
+}
+
+pub fn on_talk_to_npc(world: &mut GameWorld, player_id: PlayerId, npc_id: NpcId) -> Vec<ServerMessage> {
+    advance_quests(world, player_id, |obj| {
+        matches!(obj, QuestObjective::TalkToNpc { npc_id: id } if *id == npc_id)
+    })
+}
+
+pub fn on_skill_level(world: &mut GameWorld, player_id: PlayerId, skill: Skill, level: u32) -> Vec<ServerMessage> {
+    let mut out = Vec::new();
+    let quests: Vec<QuestId> = world.content.quests.iter().map(|q| q.id).collect();
+    for qid in quests {
+        let stage = world
+            .players
+            .get(&player_id)
+            .and_then(|p| p.quest_progress.get(&qid).copied())
+            .unwrap_or(0);
+        if stage == 0 {
+            continue;
         }
-    });
+        if let Some(quest) = world.content.quest(qid) {
+            if let Some(quest_stage) = quest.stages.iter().find(|s| s.stage == stage) {
+                if let QuestObjective::ReachSkillLevel {
+                    skill: req_skill,
+                    level: req_level,
+                } = quest_stage.objective
+                {
+                    if req_skill == skill && level >= req_level {
+                        if let Some(msg) = complete_stage(world, player_id, qid, stage) {
+                            out.push(msg);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+pub fn on_visit_tile(world: &mut GameWorld, player_id: PlayerId, position: TilePos) -> Vec<ServerMessage> {
+    let mut out = Vec::new();
+    let quests: Vec<QuestId> = world.content.quests.iter().map(|q| q.id).collect();
+    for qid in quests {
+        let stage = world
+            .players
+            .get(&player_id)
+            .and_then(|p| p.quest_progress.get(&qid).copied())
+            .unwrap_or(0);
+        if stage == 0 {
+            continue;
+        }
+        if let Some(quest) = world.content.quest(qid) {
+            if let Some(quest_stage) = quest.stages.iter().find(|s| s.stage == stage) {
+                if let QuestObjective::VisitTile {
+                    position: target,
+                    radius,
+                } = quest_stage.objective
+                {
+                    if position.chebyshev_distance(&target) <= radius {
+                        if let Some(msg) = complete_stage(world, player_id, qid, stage) {
+                            out.push(msg);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 fn advance_quests(
     world: &mut GameWorld,
     player_id: PlayerId,
-    predicate: impl Fn(&openmmo_common::QuestObjective) -> bool,
-) {
+    predicate: impl Fn(&QuestObjective) -> bool,
+) -> Vec<ServerMessage> {
+    let mut out = Vec::new();
     let quests: Vec<QuestId> = world.content.quests.iter().map(|q| q.id).collect();
     for qid in quests {
         let stage = world
@@ -107,16 +200,74 @@ fn advance_quests(
         if let Some(quest) = world.content.quest(qid) {
             if let Some(quest_stage) = quest.stages.iter().find(|s| s.stage == stage) {
                 if predicate(&quest_stage.objective) {
-                    if let Some(player) = world.players.get_mut(&player_id) {
-                        let next = stage + 1;
-                        let completed = quest.stages.iter().all(|s| s.stage < next);
-                        player.quest_progress.insert(qid, next);
-                        let _ = completed;
+                    let required = objective_count(&quest_stage.objective);
+                    if required <= 1 {
+                        if let Some(msg) = complete_stage(world, player_id, qid, stage) {
+                            out.push(msg);
+                        }
+                    } else if let Some(msg) =
+                        increment_counter(world, player_id, qid, stage, required)
+                    {
+                        out.push(msg);
                     }
                 }
             }
         }
     }
+    out
+}
+
+fn objective_count(obj: &QuestObjective) -> u32 {
+    match obj {
+        QuestObjective::Harvest { count, .. }
+        | QuestObjective::Refine { count, .. }
+        | QuestObjective::KillNpc { count, .. } => *count,
+        _ => 1,
+    }
+}
+
+fn increment_counter(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    qid: QuestId,
+    stage: u32,
+    required: u32,
+) -> Option<ServerMessage> {
+    let Some(player) = world.players.get_mut(&player_id) else {
+        return None;
+    };
+    let key = (qid, stage);
+    let count = player.quest_counters.entry(key).or_insert(0);
+    *count += 1;
+    if *count >= required {
+        player.quest_counters.remove(&key);
+        drop(player);
+        complete_stage(world, player_id, qid, stage)
+    } else {
+        None
+    }
+}
+
+fn complete_stage(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    qid: QuestId,
+    stage: u32,
+) -> Option<ServerMessage> {
+    let Some(quest) = world.content.quest(qid).cloned() else {
+        return None;
+    };
+    let Some(player) = world.players.get_mut(&player_id) else {
+        return None;
+    };
+    let next = stage + 1;
+    let completed = !quest.stages.iter().any(|s| s.stage == next);
+    player.quest_progress.insert(qid, next);
+    Some(ServerMessage::QuestUpdate {
+        quest_id: qid,
+        stage: next,
+        completed,
+    })
 }
 
 pub fn quest_journal(world: &GameWorld, player_id: PlayerId) -> Vec<(String, String)> {
@@ -140,4 +291,26 @@ pub fn quest_journal(world: &GameWorld, player_id: PlayerId) -> Vec<(String, Str
         }
     }
     entries
+}
+
+pub fn quest_update_messages(world: &GameWorld, player_id: PlayerId) -> Vec<ServerMessage> {
+    let progress = world
+        .players
+        .get(&player_id)
+        .map(|p| p.quest_progress.clone())
+        .unwrap_or_default();
+    progress
+        .into_iter()
+        .filter_map(|(qid, stage)| {
+            let completed = world
+                .content
+                .quest(qid)
+                .is_some_and(|q| !q.stages.iter().any(|s| s.stage == stage));
+            Some(ServerMessage::QuestUpdate {
+                quest_id: qid,
+                stage,
+                completed,
+            })
+        })
+        .collect()
 }

@@ -1,5 +1,5 @@
 use egui::{Context, RichText};
-use openmmo_common::{Inventory, Skill, SkillBook};
+use openmmo_common::{DialogueNode, EquipSlot, Inventory, Skill, SkillBook};
 
 pub struct GameUi {
     pub show_inventory: bool,
@@ -12,11 +12,16 @@ pub struct GameUi {
     pub show_minimap: bool,
     pub chat_input: String,
     pub chat_log: Vec<(String, String)>,
+    pub combat_log: Vec<String>,
+    pub xp_drops: Vec<(String, u64)>,
     pub connection_url: String,
     pub username: String,
     pub character_name: String,
     pub connected: bool,
     pub status: String,
+    pub active_dialogue: Option<(openmmo_common::EntityId, DialogueNode)>,
+    pub open_shop: Option<(String, Vec<openmmo_common::ShopStock>)>,
+    pub bank_mode_deposit: bool,
 }
 
 impl Default for GameUi {
@@ -26,17 +31,22 @@ impl Default for GameUi {
             show_bank: false,
             show_skills: true,
             show_chat: true,
-            show_quests: false,
+            show_quests: true,
             show_market: false,
             show_friends: false,
             show_minimap: true,
             chat_input: String::new(),
             chat_log: Vec::new(),
+            combat_log: Vec::new(),
+            xp_drops: Vec::new(),
             connection_url: "ws://127.0.0.1:8080/ws".to_string(),
             username: "player".to_string(),
             character_name: "Adventurer".to_string(),
             connected: false,
             status: "Disconnected".to_string(),
+            active_dialogue: None,
+            open_shop: None,
+            bank_mode_deposit: true,
         }
     }
 }
@@ -78,6 +88,15 @@ impl GameUi {
     ) -> UiAction {
         let mut action = UiAction::None;
 
+        for (skill, amount) in &self.xp_drops.clone() {
+            egui::Area::new(egui::Id::new(format!("xp_{skill}_{amount}")))
+                .anchor(egui::Align2::CENTER_TOP, [0.0, 40.0])
+                .show(ctx, |ui| {
+                    ui.label(RichText::new(format!("+{amount} {skill} XP")).color(egui::Color32::YELLOW));
+                });
+        }
+        self.xp_drops.clear();
+
         if self.show_minimap {
             egui::Window::new("Minimap")
                 .default_pos([10.0, 10.0])
@@ -97,6 +116,9 @@ impl GameUi {
                 .max_height(80.0)
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
+                    for line in &self.combat_log {
+                        ui.colored_label(egui::Color32::LIGHT_RED, line);
+                    }
                     for (from, msg) in &self.chat_log {
                         ui.label(format!("[{from}] {msg}"));
                     }
@@ -116,6 +138,7 @@ impl GameUi {
 
         egui::SidePanel::right("side_panel").show(ctx, |ui| {
             ui.heading(format!("HP: {hp}/{max_hp}"));
+            ui.label(&self.status);
             ui.separator();
 
             ui.horizontal(|ui| {
@@ -131,21 +154,51 @@ impl GameUi {
                 ui.heading("Inventory");
                 for (i, slot) in inventory.slots.iter().enumerate() {
                     if let Some(s) = slot {
-                        if ui
-                            .button(format!("#{i}: item {} x{}", s.item_id.0, s.quantity))
-                            .clicked()
-                        {
-                            action = UiAction::DropItem(i);
-                        }
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(format!("#{}: item {} x{}", i, s.item_id.0, s.quantity))
+                                .clicked()
+                            {
+                                action = UiAction::DropItem(i);
+                            }
+                            if ui.small_button("Equip").clicked() {
+                                action = UiAction::EquipItem(i);
+                            }
+                        });
                     }
                 }
             }
 
             if self.show_bank {
                 ui.heading("Bank");
-                for (i, slot) in bank.slots.iter().enumerate() {
-                    if let Some(s) = slot {
-                        ui.label(format!("#{i}: item {} x{}", s.item_id.0, s.quantity));
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.bank_mode_deposit, true, "Deposit");
+                    ui.selectable_value(&mut self.bank_mode_deposit, false, "Withdraw");
+                });
+                if self.bank_mode_deposit {
+                    for (i, slot) in inventory.slots.iter().enumerate() {
+                        if let Some(s) = slot {
+                            if ui
+                                .button(format!("Deposit #{}: item {} x{}", i, s.item_id.0, s.quantity))
+                                .clicked()
+                            {
+                                action = UiAction::BankDeposit { inv_slot: i, quantity: 1 };
+                            }
+                        }
+                    }
+                } else {
+                    for (i, slot) in bank.slots.iter().enumerate() {
+                        if let Some(s) = slot {
+                            if ui
+                                .button(format!("Withdraw #{}: item {} x{}", i, s.item_id.0, s.quantity))
+                                .clicked()
+                            {
+                                action = UiAction::BankWithdraw {
+                                    bank_slot: i,
+                                    quantity: 1,
+                                };
+                            }
+                        }
                     }
                 }
             }
@@ -153,8 +206,19 @@ impl GameUi {
             if self.show_skills {
                 ui.heading("Skills");
                 for skill in Skill::all() {
-                    let level = skills.level(*skill);
-                    ui.label(format!("{}: {}", skill.name(), level));
+                    let progress = skills.skills.get(skill);
+                    let level = progress.map(|p| p.level).unwrap_or(1);
+                    let xp = progress.map(|p| p.xp).unwrap_or(0);
+                    ui.label(format!("{}: Lv {level} ({xp} xp)", skill.name()));
+                }
+                ui.separator();
+                ui.label("Fabrication");
+                for recipe in ["timber_to_plank", "ore_to_ingot", "fish_to_fillet"] {
+                    if ui.button(format!("Refine: {recipe}")).clicked() {
+                        action = UiAction::Refine {
+                            recipe_id: recipe.to_string(),
+                        };
+                    }
                 }
             }
 
@@ -168,6 +232,51 @@ impl GameUi {
             }
         });
 
+        if let Some((npc_entity, node)) = self.active_dialogue.clone() {
+            egui::Window::new("Dialogue")
+                .collapsible(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(&node.text);
+                    ui.separator();
+                    for (idx, opt) in node.options.iter().enumerate() {
+                        if ui.button(&opt.label).clicked() {
+                            action = UiAction::DialogueSelect {
+                                npc_entity,
+                                option_index: idx,
+                            };
+                            self.active_dialogue = None;
+                        }
+                    }
+                });
+        }
+
+        if let Some((shop_id, stock)) = self.open_shop.clone() {
+            egui::Window::new("Shop")
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label(format!("Shop: {shop_id}"));
+                    for item in &stock {
+                        if ui
+                            .button(format!(
+                                "Buy item {} x{} for {}",
+                                item.item_id.0, item.quantity, item.price
+                            ))
+                            .clicked()
+                        {
+                            action = UiAction::ShopBuy {
+                                shop_id: shop_id.clone(),
+                                item_id: item.item_id,
+                                quantity: 1,
+                            };
+                        }
+                    }
+                    if ui.button("Close").clicked() {
+                        self.open_shop = None;
+                    }
+                });
+        }
+
         action
     }
 }
@@ -177,5 +286,18 @@ pub enum UiAction {
     None,
     Chat(String),
     DropItem(usize),
+    EquipItem(usize),
+    BankDeposit { inv_slot: usize, quantity: u32 },
+    BankWithdraw { bank_slot: usize, quantity: u32 },
+    Refine { recipe_id: String },
+    DialogueSelect {
+        npc_entity: openmmo_common::EntityId,
+        option_index: usize,
+    },
+    ShopBuy {
+        shop_id: String,
+        item_id: openmmo_common::ItemId,
+        quantity: u32,
+    },
     Connect,
 }

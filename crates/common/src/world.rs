@@ -21,10 +21,22 @@ pub struct PlayerState {
     pub combat_target: Option<EntityId>,
     pub action: PlayerAction,
     pub quest_progress: std::collections::HashMap<crate::QuestId, u32>,
+    #[serde(default)]
+    pub quest_counters: std::collections::HashMap<(crate::QuestId, u32), u32>,
     pub friends: Vec<String>,
     pub ledger_rank: u32,
     pub ledger_points: u32,
     pub specialization: std::collections::HashMap<Skill, String>,
+    #[serde(default)]
+    pub is_moderator: bool,
+    #[serde(default)]
+    pub last_position: TilePos,
+    #[serde(default = "default_one")]
+    pub ticks_stationary: u64,
+}
+
+fn default_one() -> u64 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

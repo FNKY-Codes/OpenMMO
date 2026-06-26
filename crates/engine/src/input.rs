@@ -14,6 +14,16 @@ pub struct InputState {
 }
 
 impl InputState {
+    pub fn entity_under_cursor(
+        &self,
+        camera: &Camera,
+        width: u32,
+        height: u32,
+        entities: &[openmmo_common::WorldEntity],
+    ) -> Option<openmmo_common::EntityId> {
+        camera.pick_entity(self.mouse_x, self.mouse_y, width, height, entities)
+    }
+
     pub fn tile_under_cursor(&self, camera: &Camera, width: u32, height: u32) -> Option<TilePos> {
         camera.pick_tile(self.mouse_x, self.mouse_y, width, height)
     }
