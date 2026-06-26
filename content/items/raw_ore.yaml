@@ -1,0 +1,8 @@
+id: 4
+name: Raw Ore
+stackable: true
+equip_slot: null
+prowess_bonus: 0
+fortitude_bonus: 0
+tool_tag: null
+alchemy_value: 3

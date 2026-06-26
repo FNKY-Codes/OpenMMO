@@ -1,0 +1,12 @@
+id: 3
+name: Hollow Wisp
+max_hp: 12
+prowess: 4
+fortitude: 2
+aggro_range: 4
+respawn_ticks: 20
+loot_table:
+  - item_id: 1
+    min_qty: 1
+    max_qty: 3
+    rate: 1.0

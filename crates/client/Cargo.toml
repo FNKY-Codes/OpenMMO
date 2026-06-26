@@ -1,0 +1,23 @@
+[package]
+name = "openmmo-client"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "openmmo-client"
+path = "src/main.rs"
+
+[dependencies]
+openmmo-common = { path = "../common" }
+openmmo-protocol = { path = "../protocol" }
+openmmo-engine = { path = "../engine" }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }

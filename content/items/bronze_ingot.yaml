@@ -1,0 +1,8 @@
+id: 5
+name: Bronze Ingot
+stackable: true
+equip_slot: null
+prowess_bonus: 0
+fortitude_bonus: 0
+tool_tag: null
+alchemy_value: 15

@@ -1,0 +1,10 @@
+[package]
+name = "openmmo-protocol"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+openmmo-common = { path = "../common" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }

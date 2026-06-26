@@ -1,0 +1,7 @@
+id: npc_1_callings
+text: War, Wild, Craft, and Arcane paths all await. Harvest feeds Refinement. Prowess protects Vitality.
+options:
+  - label: I'll start my journey.
+    action:
+      type: start_quest
+      quest_id: 1

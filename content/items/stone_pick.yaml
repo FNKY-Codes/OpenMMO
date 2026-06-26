@@ -1,0 +1,8 @@
+id: 10
+name: Stone Pick
+stackable: false
+equip_slot: null
+prowess_bonus: 0
+fortitude_bonus: 0
+tool_tag: pick
+alchemy_value: 20

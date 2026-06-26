@@ -1,0 +1,8 @@
+id: 1
+name: Birch Timber
+harvest_tag: timber
+harvest_level: 1
+harvest_xp: 25
+harvest_item: 2
+harvest_ticks: 3
+depletes: true
