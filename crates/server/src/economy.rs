@@ -33,6 +33,25 @@ pub struct EconomyState {
     pub price_history: HashMap<u32, Vec<u32>>,
 }
 
+fn find_trade_session<'a>(
+    trades: &'a mut HashMap<PlayerId, TradeSession>,
+    a: PlayerId,
+    b: PlayerId,
+) -> Option<&'a mut TradeSession> {
+    trades.values_mut().find(|s| {
+        (s.player_a == a && s.player_b == b) || (s.player_a == b && s.player_b == a)
+    })
+}
+
+#[allow(dead_code)]
+fn _find_trade_session_alias<'a>(
+    trades: &'a mut HashMap<PlayerId, TradeSession>,
+    a: PlayerId,
+    b: PlayerId,
+) -> Option<&'a mut TradeSession> {
+    find_trade_session(trades, a, b)
+}
+
 pub fn handle_market_offer(
     world: &mut GameWorld,
     player_id: PlayerId,
@@ -137,7 +156,18 @@ pub fn handle_trade_request(
             accepted_b: false,
         },
     );
-    Vec::new()
+    let partner = world
+        .players
+        .get(&to)
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
+    vec![ServerMessage::TradeUpdate {
+        partner,
+        their_items: Vec::new(),
+        your_items: Vec::new(),
+        partner_accepted: false,
+        you_accepted: false,
+    }]
 }
 
 pub fn handle_trade_offer(
@@ -146,23 +176,57 @@ pub fn handle_trade_offer(
     to: PlayerId,
     items: Vec<InventorySlot>,
 ) -> Vec<ServerMessage> {
-    if let Some(session) = world.economy.trades.get_mut(&from) {
+    let initiator = world
+        .economy
+        .trades
+        .iter()
+        .find(|(_, s)| {
+            (s.player_a == from && s.player_b == to) || (s.player_a == to && s.player_b == from)
+        })
+        .map(|(k, _)| *k);
+    let Some(initiator) = initiator else {
+        return Vec::new();
+    };
+    let session = match world.economy.trades.get_mut(&initiator) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    if from == session.player_a {
         session.items_a = items;
         session.accepted_a = false;
-        let partner = world
-            .players
-            .get(&to)
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
-        return vec![ServerMessage::TradeUpdate {
-            partner,
-            their_items: session.items_b.clone(),
-            your_items: session.items_a.clone(),
-            partner_accepted: session.accepted_b,
-            you_accepted: session.accepted_a,
-        }];
+    } else if from == session.player_b {
+        session.items_b = items;
+        session.accepted_b = false;
+    } else {
+        return Vec::new();
     }
-    Vec::new()
+    let partner = world
+        .players
+        .get(&to)
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
+    let (your_items, their_items, you_accepted, partner_accepted) = if from == session.player_a {
+        (
+            session.items_a.clone(),
+            session.items_b.clone(),
+            session.accepted_a,
+            session.accepted_b,
+        )
+    } else {
+        (
+            session.items_b.clone(),
+            session.items_a.clone(),
+            session.accepted_b,
+            session.accepted_a,
+        )
+    };
+    vec![ServerMessage::TradeUpdate {
+        partner,
+        their_items,
+        your_items,
+        partner_accepted,
+        you_accepted,
+    }]
 }
 
 pub fn handle_trade_accept(
@@ -170,22 +234,62 @@ pub fn handle_trade_accept(
     from: PlayerId,
     to: PlayerId,
 ) -> Vec<ServerMessage> {
-    let session = match world.economy.trades.get_mut(&from) {
+    let initiator = world
+        .economy
+        .trades
+        .iter()
+        .find(|(_, s)| {
+            (s.player_a == from && s.player_b == to) || (s.player_a == to && s.player_b == from)
+        })
+        .map(|(k, _)| *k);
+    let Some(initiator) = initiator else {
+        return Vec::new();
+    };
+    let session = match world.economy.trades.get_mut(&initiator) {
         Some(s) => s,
         None => return Vec::new(),
     };
-    if session.player_b != to {
+    if from == session.player_a {
+        session.accepted_a = true;
+    } else if from == session.player_b {
+        session.accepted_b = true;
+    } else {
         return Vec::new();
     }
-    session.accepted_a = true;
     if session.accepted_a && session.accepted_b {
-        return execute_trade(world, from);
+        return execute_trade(world, initiator);
     }
-    Vec::new()
+    let partner = world
+        .players
+        .get(&to)
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
+    let (your_items, their_items, you_accepted, partner_accepted) = if from == session.player_a {
+        (
+            session.items_a.clone(),
+            session.items_b.clone(),
+            session.accepted_a,
+            session.accepted_b,
+        )
+    } else {
+        (
+            session.items_b.clone(),
+            session.items_a.clone(),
+            session.accepted_b,
+            session.accepted_a,
+        )
+    };
+    vec![ServerMessage::TradeUpdate {
+        partner,
+        their_items,
+        your_items,
+        partner_accepted,
+        you_accepted,
+    }]
 }
 
-fn execute_trade(world: &mut GameWorld, from: PlayerId) -> Vec<ServerMessage> {
-    let session = match world.economy.trades.remove(&from) {
+fn execute_trade(world: &mut GameWorld, initiator: PlayerId) -> Vec<ServerMessage> {
+    let session = match world.economy.trades.remove(&initiator) {
         Some(s) => s,
         None => return Vec::new(),
     };
@@ -194,29 +298,33 @@ fn execute_trade(world: &mut GameWorld, from: PlayerId) -> Vec<ServerMessage> {
     let player_a = session.player_a;
     let player_b = session.player_b;
     let mut out = Vec::new();
-    if let Some(player_b) = world.players.get_mut(&player_b) {
+    if let Some(player_b_ref) = world.players.get_mut(&player_b) {
         for item in items_a {
             let stackable = world
                 .content
                 .item(item.item_id)
                 .map(|i| i.stackable)
                 .unwrap_or(true);
-            let _ = player_b.inventory.add_item(item.item_id, item.quantity, stackable);
+            let _ = player_b_ref
+                .inventory
+                .add_item(item.item_id, item.quantity, stackable);
         }
     }
-    if let Some(player_a) = world.players.get_mut(&player_a) {
+    if let Some(player_a_ref) = world.players.get_mut(&player_a) {
         for item in items_b {
             let stackable = world
                 .content
                 .item(item.item_id)
                 .map(|i| i.stackable)
                 .unwrap_or(true);
-            let _ = player_a.inventory.add_item(item.item_id, item.quantity, stackable);
+            let _ = player_a_ref
+                .inventory
+                .add_item(item.item_id, item.quantity, stackable);
         }
-        out.push(inventory_update(player_a));
+        out.push(inventory_update(player_a_ref));
     }
-    if let Some(player_b) = world.players.get(&player_b) {
-        out.push(inventory_update(player_b));
+    if let Some(player_b_ref) = world.players.get(&player_b) {
+        out.push(inventory_update(player_b_ref));
     }
     world.audit(&format!(
         "Trade executed between {:?} and {:?}",
@@ -266,7 +374,11 @@ pub fn match_offers(world: &mut GameWorld) {
                     .values_mut()
                     .find(|p| p.name == sell.player_name)
                 {
-                    let stackable = world.content.item(ItemId(1)).map(|i| i.stackable).unwrap_or(true);
+                    let stackable = world
+                        .content
+                        .item(ItemId(1))
+                        .map(|i| i.stackable)
+                        .unwrap_or(true);
                     let _ = seller.inventory.add_item(ItemId(1), total, stackable);
                 }
                 world
@@ -342,5 +454,76 @@ pub fn complete_ledger_kill(
                 world.economy.ledger_contracts.remove(&player_id);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openmmo_common::{ContentPack, Inventory, ItemId, PlayerState, SkillBook, TilePos};
+
+    use uuid::Uuid;
+
+    fn test_player(id: u128, name: &str) -> PlayerState {
+        let pid = PlayerId(Uuid::from_u128(id));
+        PlayerState {
+            id: pid,
+            name: name.to_string(),
+            entity_id: openmmo_common::EntityId(id as u32),
+            position: TilePos::new(0, 0),
+            hp: 10,
+            max_hp: 10,
+            skills: SkillBook::new_mvp(),
+            inventory: Inventory::new(28),
+            bank: Inventory::new(200),
+            equipment: Default::default(),
+            combat_target: None,
+            action: Default::default(),
+            quest_progress: Default::default(),
+            quest_counters: Default::default(),
+            friends: Vec::new(),
+            ledger_rank: 0,
+            ledger_points: 0,
+            specialization: Default::default(),
+            is_moderator: false,
+            last_position: TilePos::new(0, 0),
+            ticks_stationary: 1,
+        }
+    }
+
+    #[test]
+    fn bilateral_trade_accept_executes_swap() {
+        let mut world = GameWorld::new(ContentPack::default());
+        let a = PlayerId(Uuid::from_u128(1));
+        let b = PlayerId(Uuid::from_u128(2));
+        world.players.insert(a, test_player(1, "Alice"));
+        world.players.insert(b, test_player(2, "Bob"));
+        world.economy.trades.insert(
+            a,
+            TradeSession {
+                player_a: a,
+                player_b: b,
+                items_a: vec![openmmo_common::InventorySlot {
+                    item_id: ItemId(2),
+                    quantity: 3,
+                }],
+                items_b: vec![openmmo_common::InventorySlot {
+                    item_id: ItemId(3),
+                    quantity: 1,
+                }],
+                accepted_a: false,
+                accepted_b: false,
+            },
+        );
+        let _ = handle_trade_accept(&mut world, a, b);
+        let msgs = handle_trade_accept(&mut world, b, a);
+        assert!(!msgs.is_empty());
+        assert!(world.economy.trades.is_empty());
+        assert_eq!(
+            world.players.get(&b).unwrap().inventory.slots[0]
+                .as_ref()
+                .map(|s| s.item_id),
+            Some(ItemId(2))
+        );
     }
 }

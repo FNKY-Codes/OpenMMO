@@ -805,6 +805,47 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
         match action {
             PlayerAction::Combat { target, style } => {
                 let mut rng = rand::thread_rng();
+                let boss_target = world.boss.as_ref().map(|b| b.entity_id) == Some(target);
+                if boss_target {
+                    let in_range = world
+                        .players
+                        .get(&pid)
+                        .zip(world.boss.as_ref())
+                        .map(|(p, b)| p.position.chebyshev_distance(&b.position) <= 1)
+                        .unwrap_or(false);
+                    if in_range {
+                        let player_eid = world.players.get(&pid).map(|p| p.entity_id);
+                        if let (Some(player), Some(boss)) =
+                            (world.players.get_mut(&pid), world.boss.as_mut())
+                        {
+                            let max_hit = crate::combat::player_max_hit(player, style, &content);
+                            let dmg = crate::combat::roll_damage(max_hit);
+                            boss.hp = boss.hp.saturating_sub(dmg);
+                            if let Some(eid) = player_eid {
+                                messages.push((
+                                    MessageTarget::Player(pid),
+                                    ServerMessage::Damage {
+                                        source: eid,
+                                        target,
+                                        amount: dmg,
+                                        style,
+                                    },
+                                ));
+                            }
+                            if boss.hp == 0 {
+                                world.boss = None;
+                                messages.push((
+                                    MessageTarget::Player(pid),
+                                    ServerMessage::Death {
+                                        entity: target,
+                                        killer: player_eid,
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                    continue;
+                }
                 if rng.gen_bool(0.5) {
                     let in_range = world
                         .players
@@ -1358,5 +1399,92 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                 ));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::*;
+    use openmmo_common::{Inventory, InventorySlot, ItemId, PlayerState, SkillBook, TilePos};
+    use uuid::Uuid;
+
+    fn test_player(id: u128) -> PlayerState {
+        let pid = PlayerId(Uuid::from_u128(id));
+        let mut player = PlayerState {
+            id: pid,
+            name: "Tester".into(),
+            entity_id: openmmo_common::EntityId(id as u32),
+            position: TilePos::new(0, 0),
+            hp: 10,
+            max_hp: 10,
+            skills: SkillBook::new_mvp(),
+            inventory: Inventory::new(28),
+            bank: Inventory::new(200),
+            equipment: Default::default(),
+            combat_target: None,
+            action: Default::default(),
+            quest_progress: Default::default(),
+            quest_counters: Default::default(),
+            friends: Vec::new(),
+            ledger_rank: 0,
+            ledger_points: 0,
+            specialization: Default::default(),
+            is_moderator: false,
+            last_position: TilePos::new(0, 0),
+            ticks_stationary: 1,
+        };
+        player.inventory.slots[0] = Some(InventorySlot {
+            item_id: ItemId(2),
+            quantity: 5,
+        });
+        player
+    }
+
+    #[test]
+    fn private_actions_route_to_initiating_player() {
+        let mut world = GameWorld::new(openmmo_common::ContentPack::default());
+        let pid = PlayerId(Uuid::from_u128(1));
+        world.players.insert(pid, test_player(1));
+        let msgs = handle_client_message(
+            &mut world,
+            pid,
+            ClientMessage::BankDeposit {
+                inv_slot: 0,
+                quantity: 2,
+            },
+        );
+        assert!(!msgs.is_empty());
+        assert!(msgs
+            .iter()
+            .all(|(target, _)| matches!(target, MessageTarget::Player(p) if *p == pid)));
+        assert_eq!(
+            world.players.get(&pid).unwrap().inventory.slots[0]
+                .as_ref()
+                .map(|s| s.quantity),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn process_tick_routes_refine_completion_to_player() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content);
+        let pid = PlayerId(Uuid::from_u128(1));
+        let mut player = test_player(1);
+        player.inventory.slots[0] = Some(InventorySlot {
+            item_id: ItemId(2),
+            quantity: 5,
+        });
+        world.players.insert(pid, player);
+        world.players.get_mut(&pid).unwrap().action = openmmo_common::PlayerAction::Fabricating {
+            recipe_id: "timber_to_plank".into(),
+            ticks_remaining: 0,
+        };
+        let msgs = process_tick(&mut world);
+        assert!(msgs.iter().any(|(target, msg)| {
+            matches!(target, MessageTarget::Player(p) if *p == pid)
+                && matches!(msg, ServerMessage::InventoryUpdate { .. })
+        }));
     }
 }

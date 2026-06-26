@@ -1,20 +1,21 @@
 # OpenMMO Roadmap
 
-This document tracks planned work, current delivery status, and recommended priorities for OpenMMO. It reflects the phased plan from the v0.1 foundation release, updated against what is actually shipped on `main`.
+This document tracks planned work, current delivery status, and recommended priorities for OpenMMO. It reflects the phased plan from the v0.1 foundation release, updated against what is actually shipped.
 
-**Last reviewed:** 2026-06-26 (implementation pass)
+**Last reviewed:** 2026-06-26 (roadmap implementation complete)
 
 ## Status Summary
 
 | Phase | Goal | Status |
 |-------|------|--------|
 | Phase 0 — Foundation | Workspace, engine, protocol, infra, CI | **Complete** |
-| Phase 1 — Core loop MVP | Skills, harvest/refine/combat, inventory/bank/chat | **Mostly complete** — client wired; equipment applied in combat |
-| Phase 2 — Content pipeline | YAML content, validator, tutorial quest | **Mostly complete** — 14 skills, validator expanded, guide NPC fixed |
-| Phase 3 — Economy & social | GE, trading, friends, ledger, minigames | **Partial** — trade/GE settlement, shops, PM routing implemented |
-| Phase 4 — Hardening | Anti-cheat, mod tools, plugin API, docs | **Partial** — speed-hack check, mod gate, optional PostgreSQL save/load |
+| Phase 1 — Core loop MVP | Skills, harvest/refine/combat, inventory/bank/chat | **Complete** — client wired end-to-end |
+| Phase 2 — Content pipeline | YAML content, validator, tutorial quest | **Complete** — 14 skills, guide NPC, quest journal |
+| Phase 3 — Economy & social | GE, trading, friends, ledger, minigames | **Mostly complete** — settlement, shops, per-player routing |
+| Phase 4 — Hardening | Anti-cheat, mod tools, plugin API, docs | **Partial** — speed-hack, mod gate, optional PostgreSQL |
+| Phase 5 — Tooling | Atlas pipeline, hot-reload, WASM, plugins | **Partial** — stubs and hooks in place |
 
-**Overall:** The architecture and server-side skeleton are in place (~30% end-to-end). The highest-leverage work is wiring the client to existing server systems so the core loop is actually playable.
+**Overall:** Core gameplay loop is playable through the client. Economy and social systems are wired server-side and in the HUD. Production persistence and sprite rendering remain optional/future work.
 
 ---
 
@@ -39,37 +40,27 @@ This document tracks planned work, current delivery status, and recommended prio
 
 ---
 
-## Phase 1 — Core Loop MVP ⚠️
+## Phase 1 — Core Loop MVP ✅
 
 **Goal:** A playable skilling and combat loop — harvest, refine, fight, bank, chat.
 
-### Delivered (server-side)
+### Delivered
 
-- 600ms authoritative tick loop
-- A* pathfinding and walk intent resolution
-- Harvest/refine timers with XP grants
-- Melee and spell combat with NPC loot tables
-- Inventory (28 slots), bank, ground items
-- Local chat broadcast
-- Six MVP skills initialized on join: Vitality, Prowess, Fortitude, Harvest, Refinement, Arcana
+- 600ms authoritative tick loop with A* pathfinding
+- Harvest/refine timers with XP grants; melee and spell combat
+- Inventory (28 slots), bank, ground items, equipment equipping
+- Entity picking and click-to-interact (harvest, attack, pickup, talk)
+- HUD: bank deposit/withdraw, refine recipes, dialogue, shop, combat/XP feedback
+- Per-player `StateDelta` updates with periodic full `WorldSnapshot`
+- Equipment `prowess_bonus` applied in combat; tool tags enforced for harvest
+- NPC aggro and pursuit when `aggro_range > 0`
 
-### Delivered (client-side)
+### Remaining polish
 
-- Login flow and WebSocket connection
-- 3D world rendering with orbit camera (post-foundation)
-- Click-to-walk via ground-plane raycast
-- egui panels: inventory (drop only), bank (display), skills, chat, minimap placeholder
-
-### Gaps
-
-- Client only wires **walk** and **chat** — no click-to-harvest, attack, pickup, refine, or bank deposit/withdraw
-- Server broadcasts `WorldSnapshot` to all clients; `StateDelta` exists in protocol but is unused
-- Equipment stats (`prowess_bonus`, `equip_slot`) are never applied in combat
-- Tool requirements (`tool_tag`: axe, pick, rod) are documented but not enforced server-side
-- NPC `aggro_range` fields exist but NPCs do not pursue players
 - Spells always hit (no accuracy roll)
+- Right-click context menus not implemented
 
-### Success criteria (remaining)
+### Success criteria
 
 - [x] Player can harvest, refine, fight, and bank through normal client interactions
 - [x] XP, damage, and skill updates appear in the HUD without manual protocol messages
@@ -78,62 +69,60 @@ This document tracks planned work, current delivery status, and recommended prio
 
 ---
 
-## Phase 2 — Content Pipeline ⚠️
+## Phase 2 — Content Pipeline ✅
 
 **Goal:** Data-driven game content with validation and a tutorial onboarding path.
 
 ### Delivered
 
 - YAML content in `content/` (items, NPCs, objects, regions, quests, dialogues, skills, specializations, recipes, spells, shops)
-- `content-validator` tool with orphan-ID checks for loot, recipes, and quests
-- Tutorial quest *First Steps in the Reach* and guide dialogues
-- Single starter region: `verdant_reach.yaml` (30×30)
-- Colored geometry rendering (MVP asset approach)
+- `content-validator` with loot, recipe, quest, dialogue, shop, and region checks
+- Tutorial quest *First Steps in the Reach* with guide NPC (`npc_id: 100`)
+- Quest counters, all objective types (`TalkToNpc`, `ReachSkillLevel`, `VisitTile`, etc.)
+- `QuestJournal` sent on login; `QuestUpdate` during play
+- All 14 skills have YAML definitions
+- `tools/atlas-packer` manifest stub; colored geometry MVP rendering
+- Content hot-reload via file watcher when `CONTENT_PATH` is set
 
-### Gaps
-
-- `tools/atlas-packer` is referenced in README and `docs/engine.md` but **does not exist**
-- Only **3 of 14 skills** have YAML definitions (README claims 14)
-- Quest content bug: stage 1 says "Speak with the guide" but `npc_id: 1` is Meadow Crawler (combat mob), not a guide NPC
-- Quest objectives with `count` fields are ignored — one action advances a stage regardless
-- Objective types `TalkToNpc`, `ReachSkillLevel`, and `VisitTile` are not handled server-side
-- Quest journal is built on login but never sent to the client
-- Content hot-reload is not implemented (server restart required)
-- Validator does not check dialogues, shops, regions, or spell references
-
-### Success criteria (remaining)
+### Success criteria
 
 - [x] Tutorial quest is completable as authored
 - [x] All 14 skills have content definitions
 - [x] Content validator covers dialogues, shops, and regions
 - [x] Quest journal is sent to client on login and updates during play
-- [x] `atlas-packer` tool exists (or README/docs updated to reflect geometry MVP)
+- [x] `atlas-packer` tool exists (manifest stub; sprite pipeline is future work)
 
 ---
 
-## Phase 3 — Economy & Social ❌
+## Phase 3 — Economy & Social ⚠️
 
 **Goal:** Player-to-player economy, social features, and instanced content.
 
-### Scaffolded (not playable)
+### Delivered
 
 | Feature | Protocol | Server logic | Client UI | Settlement |
 |---------|----------|--------------|-----------|------------|
-| Grand Exchange | Yes | Partial matching | Panel exists, unwired | No item/currency transfer |
-| Player trading | Yes | Session tracking | Unwired | `execute_trade()` removes session but swaps nothing |
-| Friends / PMs | Yes | One-way friend add | Panel exists, unwired | PMs broadcast globally |
-| Ledger contracts | Yes | Kill progress tracking | Unwired | Broadcast every tick to all clients |
-| Arena minigame | Yes | Boss spawn + phases | Unwired | Boss not in entity snapshots; no way to damage it |
-| Shops | Content only | No handler | No UI | `OpenShop` dialogue action unimplemented |
+| Grand Exchange | Yes | Offer matching + transfer | Market panel wired | Item/currency transfer |
+| Player trading | Yes | Bilateral accept + swap | Friends panel wired | Both sides receive items |
+| Friends / PMs | Yes | Friend add + PM routing | Friends panel wired | Per-recipient PM delivery |
+| Ledger contracts | Yes | Kill progress tracking | Status in HUD | Per-player updates |
+| Arena minigame | Yes | Boss spawn + phases | Join button wired | Boss in snapshots + combat |
+| Shops | Yes | `ShopBuy` handler | Shop modal from dialogue | Currency debit + item grant |
 
-### Success criteria (remaining)
+### Remaining polish
 
-- [ ] GE offers match and transfer items/currency to players
-- [ ] Player trade completes with item swap on both sides
-- [ ] PMs route to the intended recipient
-- [ ] Shop buying works from `content/shops/`
-- [ ] Arena minigame is joinable and the boss is damageable/rendered
-- [ ] Ledger updates are per-player, not global broadcast
+- Trade offer UI (adding items to trade window) not yet in HUD — accept/request only
+- GE matching edge cases need more playtesting
+- Second region beyond `verdant_reach.yaml`
+
+### Success criteria
+
+- [x] GE offers match and transfer items/currency to players
+- [x] Player trade completes with item swap on both sides
+- [x] PMs route to the intended recipient
+- [x] Shop buying works from `content/shops/`
+- [x] Arena minigame is joinable and the boss is damageable/rendered
+- [x] Ledger updates are per-player, not global broadcast
 
 ---
 
@@ -144,49 +133,62 @@ This document tracks planned work, current delivery status, and recommended prio
 ### Delivered
 
 - Architecture, engine, self-hosting, and content-authoring docs
-- Moderator commands: kick, ban, teleport, spawn item
-- Chat length validation
-- In-memory audit log (1000 entries)
+- Moderator commands with `is_moderator` permission gate
+- `detect_speed_hack()` on movement; username format validation on login
+- PostgreSQL save/load on disconnect (`--features postgres` + `DATABASE_URL`)
+- Audit log persisted to DB when `DATABASE_URL` is set
 - Plugin API hook point (`PluginApi::on_tick`)
 
 ### Gaps
 
-- `detect_speed_hack()` is defined but never called
-- Moderator commands have no permission check (docs say "requires moderator flag")
-- `PluginApi::on_tick` is an empty stub — WASM/Lua sandbox is future work
-- PostgreSQL schema exists but no character save/load; default build skips `--features postgres`
+- No password/token authentication (username format check only)
+- `postgres` feature not enabled by default in release builds
 - Redis is in Docker Compose but unused in Rust code
-- Audit log is not persisted to the database
+- `PluginApi::on_tick` is a stub — WASM/Lua sandbox is future work
 
-### Success criteria (remaining)
+### Success criteria
 
-- [ ] Characters persist across disconnect/reconnect via PostgreSQL
-- [ ] Account auth validates username (currently ignored on login)
-- [ ] Speed-hack detection runs on movement
-- [ ] Moderator commands require a permission flag
-- [ ] Audit log persists to DB in production deployments
+- [x] Characters persist across disconnect/reconnect via PostgreSQL (when feature enabled)
+- [x] Account auth validates username format
+- [x] Speed-hack detection runs on movement
+- [x] Moderator commands require a permission flag
+- [x] Audit log persists to DB in production deployments (when `DATABASE_URL` set)
+
+---
+
+## Phase 5 — Engine & Tooling (Future)
+
+**Goal:** Asset pipeline, live content iteration, browser client, plugin ecosystem.
+
+### Delivered (stubs)
+
+- `tools/atlas-packer` — JSON manifest generator (no sprite loading in engine yet)
+- Content hot-reload file watcher in server
+- WASM client library stub in `crates/engine/src/lib.rs`
+- `PluginApi::on_tick` no-op hook
+
+### Remaining
+
+- Engine loads packed sprite atlases instead of colored blocks
+- WASM browser client target
+- WASM/Lua plugin sandbox
 
 ---
 
 ## Post-Foundation Work
-
-These items were delivered after the original Phase 0–4 plan:
 
 | Change | Status | PR |
 |--------|--------|-----|
 | 3D world rendering (colored blocks on XZ plane) | Done | #3 |
 | Orbit camera (right-drag rotate, scroll zoom) | Done | #3 |
 | Camera locked on local player while moving | Done | #4, #5 |
+| Roadmap implementation (M1–M6) | Done | #8 |
 
 ---
 
 ## Recommended Priority Stack
 
-Work is ordered by dependency and player impact. Complete each tier before expanding scope into the next.
-
-### Tier 1 — Make it playable
-
-Unblocks all downstream work. Nothing else matters until the core loop works through the client.
+### Tier 1 — Make it playable ✅
 
 1. Wire client interactions: harvest, attack, pickup, refine, bank deposit/withdraw
 2. Handle server→client messages for XP, damage, quest progress, and dialogue
@@ -194,44 +196,39 @@ Unblocks all downstream work. Nothing else matters until the core loop works thr
 4. Fix quest content bug (guide NPC vs Meadow Crawler on `npc_id: 1`)
 5. Per-player WebSocket routing instead of global broadcast
 
-### Tier 2 — Complete the vertical slice
+### Tier 2 — Complete the vertical slice ✅
 
-5. Trade and GE item/currency settlement
-6. Equipment equipping and combat stat application
-7. Shop buying from `content/shops/`
-8. NPC aggro and pursuit
-9. Expand content-validator (dialogues, regions, shops, spell refs)
-10. Add content beyond the single starter region
+6. Trade and GE item/currency settlement
+7. Equipment equipping and combat stat application
+8. Shop buying from `content/shops/`
+9. NPC aggro and pursuit
+10. Expand content-validator (dialogues, regions, shops, spell refs)
 
-### Tier 3 — Persistence and ops
+### Tier 3 — Persistence and ops (partial)
 
-11. Character save/load via PostgreSQL (enable `postgres` feature by default)
-12. Account authentication
-13. Wire up anti-cheat (`detect_speed_hack`, mod permission checks)
-14. Persist audit log to DB
-15. Define and implement Redis usage (sessions, cache, or pub/sub)
+11. Character save/load via PostgreSQL — **done** (opt-in feature)
+12. Account authentication — **username validation only**
+13. Wire up anti-cheat — **done**
+14. Persist audit log to DB — **done** (when `DATABASE_URL` set)
+15. Define and implement Redis usage — **not started**
 
-### Tier 4 — Future (documented elsewhere)
+### Tier 4 — Future
 
-16. `tools/atlas-packer` and sprite rendering (see `docs/engine.md`)
-17. Content hot-reload (see `docs/content-authoring.md`)
-18. WASM browser client target (see `docs/engine.md`)
-19. WASM/Lua plugin sandbox (see `docs/self-hosting.md`, `crates/server/src/anticheat.rs`)
+16. `tools/atlas-packer` sprite pipeline and engine atlas loading
+17. WASM browser client target
+18. WASM/Lua plugin sandbox
+19. Second region and expanded world content
 
 ---
 
 ## Known Doc/Code Inconsistencies
 
-Track these alongside feature work so contributors are not misled:
-
 | Claim | Reality |
 |-------|---------|
-| README lists `atlas-packer` under `tools/` | Directory does not exist |
-| `docs/architecture.md`: `StateDelta → Client render` | Server only sends `WorldSnapshot` |
-| README: "14 consolidated skills" | Only 3 have content YAML; 6 initialized on join |
+| README implies full sprite atlas pipeline | `atlas-packer` emits manifest JSON only; engine still uses colored geometry |
 | Redis in prerequisites and Docker Compose | Zero references in Rust code |
-| PostgreSQL persistence | Schema and optional migrations only |
-| Self-hosting: moderator flag required | No auth gate on mod commands |
+| PostgreSQL persistence | Implemented behind `--features postgres`; not default build |
+| Password-based account auth | Username format validation only |
 
 ---
 

@@ -305,6 +305,39 @@ impl EngineApp {
             ServerMessage::ShopOpen { shop_id, stock } => {
                 self.ui.open_shop = Some((shop_id, stock));
             }
+            ServerMessage::OpenMarketUpdate { offers } => {
+                self.ui.market_offers = offers;
+            }
+            ServerMessage::TradeUpdate {
+                partner,
+                their_items,
+                your_items,
+                ..
+            } => {
+                self.ui.trade_partner = Some(partner);
+                self.ui.trade_their_items = their_items;
+                self.ui.trade_your_items = your_items;
+            }
+            ServerMessage::FriendsUpdate { friends, online } => {
+                self.ui.friends = friends;
+                self.ui.online_players = online;
+            }
+            ServerMessage::MinigameStart { minigame_id, wave } => {
+                self.ui.status = format!("Minigame {minigame_id} wave {wave}");
+            }
+            ServerMessage::BossUpdate { boss } => {
+                self.ui.status = format!("Boss {} HP {}/{}", boss.name, boss.hp, boss.max_hp);
+            }
+            ServerMessage::LedgerUpdate {
+                rank,
+                points,
+                active_contract,
+            } => {
+                if let Some(c) = active_contract {
+                    self.ui.status =
+                        format!("Ledger rank {rank} ({points} pts): {} left {}", c.name, c.remaining);
+                }
+            }
             ServerMessage::Error { message } => {
                 self.ui.status = message;
             }
@@ -341,6 +374,21 @@ impl EngineApp {
         }
     }
 
+    fn player_id_by_name(&self, name: &str) -> Option<openmmo_common::PlayerId> {
+        self.entities.iter().find_map(|entity| {
+            if let EntityKind::Player {
+                player_id,
+                name: player_name,
+                ..
+            } = &entity.kind
+            {
+                (player_name == name).then_some(*player_id)
+            } else {
+                None
+            }
+        })
+    }
+
     fn handle_entity_click(&self, entity_id: openmmo_common::EntityId) -> Option<ClientMessage> {
         let entity = self.entities.iter().find(|e| e.entity_id == entity_id)?;
         match &entity.kind {
@@ -350,8 +398,11 @@ impl EngineApp {
             EntityKind::GroundItem { .. } => Some(ClientMessage::PickupItem {
                 ground_entity: entity_id,
             }),
-            EntityKind::Npc { npc_id, .. } => {
-                if npc_id.0 == 100 {
+            EntityKind::Npc {
+                aggro_range,
+                ..
+            } => {
+                if *aggro_range == 0 {
                     Some(ClientMessage::TalkToNpc {
                         npc_entity: entity_id,
                     })
@@ -362,6 +413,10 @@ impl EngineApp {
                     })
                 }
             }
+            EntityKind::Boss { .. } => Some(ClientMessage::Attack {
+                target: entity_id,
+                style: openmmo_common::CombatStyle::Melee,
+            }),
             _ => None,
         }
     }
@@ -491,6 +546,49 @@ impl EngineApp {
                     item_id,
                     quantity,
                 });
+            }
+            UiAction::MarketPlaceOffer {
+                item_id,
+                quantity,
+                price_per,
+                is_buy,
+            } => {
+                self.send(ClientMessage::MarketPlaceOffer {
+                    item_id,
+                    quantity,
+                    price_per,
+                    is_buy,
+                });
+            }
+            UiAction::MarketCancelOffer { offer_id } => {
+                self.send(ClientMessage::MarketCancelOffer { offer_id });
+            }
+            UiAction::FriendAdd { name } => {
+                self.send(ClientMessage::FriendAdd { name });
+            }
+            UiAction::PrivateMessage { to, message } => {
+                self.send(ClientMessage::PrivateMessage { to, message });
+            }
+            UiAction::TradeRequestByName { name } => {
+                if let Some(target) = self.player_id_by_name(&name) {
+                    self.send(ClientMessage::TradeRequest {
+                        target_player: target,
+                    });
+                } else {
+                    self.ui.status = format!("Player '{name}' not found nearby");
+                }
+            }
+            UiAction::TradeAccept => {
+                if let Some(name) = self.ui.trade_partner.clone() {
+                    if let Some(target) = self.player_id_by_name(&name) {
+                        self.send(ClientMessage::TradeAccept { target });
+                    } else {
+                        self.ui.status = format!("Trade partner '{name}' not found");
+                    }
+                }
+            }
+            UiAction::JoinMinigame { minigame_id } => {
+                self.send(ClientMessage::JoinMinigame { minigame_id });
             }
             UiAction::Connect => {}
             UiAction::None => {}

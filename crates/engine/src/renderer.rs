@@ -411,6 +411,14 @@ impl Renderer {
                 };
                 self.add_entity_cube(*position, 0.8, 1.6, color, vertices);
             }
+            openmmo_common::EntityKind::Boss { position, hp, .. } => {
+                let color = if *hp > 0 {
+                    [0.6, 0.1, 0.8, 1.0]
+                } else {
+                    [0.3, 0.3, 0.3, 0.6]
+                };
+                self.add_entity_cube(*position, 1.4, 3.0, color, vertices);
+            }
             openmmo_common::EntityKind::Object { position, .. } => {
                 self.add_entity_cube(*position, 0.7, 1.2, [0.5, 0.3, 0.15, 1.0], vertices);
             }

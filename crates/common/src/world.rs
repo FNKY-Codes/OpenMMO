@@ -130,6 +130,14 @@ pub enum EntityKind {
         position: TilePos,
         hp: u32,
         max_hp: u32,
+        #[serde(default)]
+        aggro_range: i32,
+    },
+    Boss {
+        name: String,
+        position: TilePos,
+        hp: u32,
+        max_hp: u32,
     },
     Object {
         object_id: crate::ObjectId,
