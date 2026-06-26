@@ -5,6 +5,7 @@ use crate::math::{self, Mat4, Vec3, DEFAULT_FOV_Y};
 #[derive(Debug, Clone)]
 pub struct Camera {
     pub target_x: f32,
+    pub target_y: f32,
     pub target_z: f32,
     pub yaw: f32,
     pub pitch: f32,
@@ -21,6 +22,7 @@ impl Camera {
     pub fn new() -> Self {
         Self {
             target_x: 32.0,
+            target_y: 0.9,
             target_z: 32.0,
             yaw: 0.7,
             pitch: 0.55,
@@ -31,6 +33,7 @@ impl Camera {
     pub fn center_on_tile(&mut self, tile: TilePos) {
         self.target_x = tile.x as f32 + 0.5;
         self.target_z = tile.y as f32 + 0.5;
+        self.target_y = 0.9;
     }
 
     pub fn rotate(&mut self, dyaw: f32, dpitch: f32) {
@@ -45,13 +48,13 @@ impl Camera {
     pub fn eye_position(&self) -> Vec3 {
         let horizontal = self.distance * self.pitch.cos();
         let x = self.target_x + horizontal * self.yaw.sin();
-        let y = self.distance * self.pitch.sin();
+        let y = self.target_y + self.distance * self.pitch.sin();
         let z = self.target_z + horizontal * self.yaw.cos();
         Vec3::new(x, y, z)
     }
 
     pub fn target_position(&self) -> Vec3 {
-        Vec3::new(self.target_x, 0.0, self.target_z)
+        Vec3::new(self.target_x, self.target_y, self.target_z)
     }
 
     pub fn view_matrix(&self) -> Mat4 {
