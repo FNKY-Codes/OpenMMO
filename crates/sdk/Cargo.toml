@@ -1,15 +1,16 @@
 [package]
-name = "openmmo-common"
+name = "openmmo-sdk"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "OpenMMO content schemas, validation, and pack manifest for third-party MMO creators"
+readme = "README.md"
 
 [dependencies]
-openmmo-sdk = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
-uuid = { workspace = true }
-chrono = { workspace = true }
-rand = { workspace = true }
 anyhow = { workspace = true }
+toml = "0.8"

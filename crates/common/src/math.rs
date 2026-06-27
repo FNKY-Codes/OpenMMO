@@ -1,25 +1,4 @@
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-pub struct TilePos {
-    pub x: i32,
-    pub y: i32,
-    pub plane: u8,
-}
-
-impl TilePos {
-    pub fn new(x: i32, y: i32) -> Self {
-        Self { x, y, plane: 0 }
-    }
-
-    pub fn manhattan_distance(&self, other: &TilePos) -> i32 {
-        (self.x - other.x).abs() + (self.y - other.y).abs()
-    }
-
-    pub fn chebyshev_distance(&self, other: &TilePos) -> i32 {
-        (self.x - other.x).abs().max((self.y - other.y).abs())
-    }
-}
+pub use openmmo_sdk::math::TilePos;
 
 /// Screen/camera space to world tile (isometric projection inverse).
 pub fn screen_to_tile(screen_x: f32, screen_y: f32, camera_x: f32, camera_y: f32) -> TilePos {
@@ -42,10 +21,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn screen_tile_roundtrip() {
-        let tile = TilePos::new(10, 5);
+    fn tile_roundtrip() {
+        let tile = TilePos::new(5, 3);
         let (sx, sy) = tile_to_screen(tile, 0.0, 0.0);
-        let back = screen_to_tile(sx + 16.0, sy + 8.0, 0.0, 0.0);
+        let back = screen_to_tile(sx, sy, 0.0, 0.0);
         assert_eq!(back.x, tile.x);
         assert_eq!(back.y, tile.y);
     }

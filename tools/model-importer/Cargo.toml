@@ -1,12 +1,13 @@
 [package]
-name = "openmmo-content-validator"
+name = "openmmo-model-importer"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "content-validator"
+name = "model-importer"
 path = "src/main.rs"
 
 [dependencies]
 openmmo-sdk = { workspace = true }
+serde_yaml = { workspace = true }
 anyhow = { workspace = true }

@@ -1,12 +1,16 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/sdk",
     "crates/common",
     "crates/protocol",
     "crates/engine",
     "crates/client",
     "crates/server",
     "tools/content-validator",
+    "tools/region-linter",
+    "tools/asset-manifest",
+    "tools/model-importer",
     "tools/atlas-packer",
 ]
 default-members = ["crates/client", "crates/server"]
@@ -42,6 +46,8 @@ egui-wgpu = "0.30"
 egui-winit = "0.30"
 tokio-tungstenite = "0.23"
 url = "2"
+toml = "0.8"
+openmmo-sdk = { path = "crates/sdk" }
 
 [profile.dev]
 opt-level = 1

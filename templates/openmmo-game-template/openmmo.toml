@@ -1,0 +1,16 @@
+[pack]
+name = "My OpenMMO Game"
+version = "0.1.0"
+description = "A custom OpenMMO shard"
+author = "Your Name"
+
+[engine]
+min_sdk = "0.1.0"
+
+[paths]
+content = "content"
+assets = "assets"
+sprites = "assets/sprites"
+models = "assets/models"
+audio = "assets/audio"
+atlas = "assets/atlas"

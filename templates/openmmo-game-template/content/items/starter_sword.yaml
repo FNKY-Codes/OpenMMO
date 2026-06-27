@@ -1,0 +1,7 @@
+id: 1
+name: Starter Sword
+stackable: false
+equip_slot: weapon
+prowess_bonus: 5
+fortitude_bonus: 0
+alchemy_value: 10

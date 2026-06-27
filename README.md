@@ -32,13 +32,15 @@ Connect the client to `ws://127.0.0.1:8080/ws`, enter a username and character n
 
 ```
 crates/
+  sdk/        Published content schemas, validation, and pack manifest (openmmo-sdk)
   common/     Shared game types and content loading
   protocol/   WebSocket message definitions
   engine/     Custom wgpu + winit + egui renderer
   client/     Desktop game client
   server/     Authoritative tick-based game server
-content/      YAML game data (items, NPCs, maps, quests)
-tools/        Content validator, atlas packer
+content/      YAML game data (items, NPCs, maps, quests) — reference pack
+tools/        Content validator, region linter, asset manifest, model importer
+templates/    Starter repos for creator content packs and visual editor
 deploy/       Docker Compose and SQL migrations
 docs/         Architecture, roadmap, and self-hosting guides
 ```

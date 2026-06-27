@@ -9,6 +9,7 @@ OpenMMO is a monorepo with a custom Rust engine client and authoritative tick-ba
 - **server** — 600ms tick loop, pathfinding, combat, skills, economy
 - **protocol** — JSON-serialized messages over WebSocket
 - **common** — shared types, content schemas, skill system
+- **sdk** (`openmmo-sdk`) — publishable content schemas, validation, and pack manifest for third-party creators
 
 ## Data Flow
 
