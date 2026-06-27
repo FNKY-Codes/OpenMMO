@@ -62,6 +62,8 @@ pub enum PlayerAction {
         attack_style: Option<crate::CombatStyle>,
         #[serde(default)]
         scavenge_target: Option<EntityId>,
+        #[serde(default)]
+        talk_target: Option<EntityId>,
     },
     Scavenging {
         object_entity: EntityId,

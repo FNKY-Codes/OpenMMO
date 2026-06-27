@@ -30,6 +30,8 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
     for player_id in player_ids {
         let mut retry_attack: Option<(EntityId, openmmo_common::CombatStyle, TilePos)> = None;
         let mut retry_scavenge: Option<(EntityId, TilePos)> = None;
+        let mut retry_talk: Option<(EntityId, TilePos)> = None;
+        let mut pending_talks: Vec<(PlayerId, EntityId)> = Vec::new();
         {
             let player = match world.players.get_mut(&player_id) {
                 Some(p) => p,
@@ -41,6 +43,7 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                 attack_target,
                 attack_style,
                 scavenge_target,
+                talk_target,
             } = &mut player.action
             {
                 if *index + 1 < path.len() {
@@ -72,6 +75,11 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                                     object_pos,
                                     ticks,
                                 );
+                            } else if let Some(npc_entity) = *talk_target {
+                                let npc_pos = target_positions.get(&npc_entity).copied();
+                                if try_complete_talk_from_walk(player, npc_entity, npc_pos) {
+                                    pending_talks.push((player_id, npc_entity));
+                                }
                             }
                         }
                     }
@@ -97,6 +105,15 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                             player.action = PlayerAction::Idle;
                         }
                     }
+                } else if let Some(npc_entity) = *talk_target {
+                    let npc_pos = target_positions.get(&npc_entity).copied();
+                    if try_complete_talk_from_walk(player, npc_entity, npc_pos) {
+                        pending_talks.push((player_id, npc_entity));
+                    } else if let Some(pos) = npc_pos {
+                        retry_talk = Some((npc_entity, pos));
+                    } else {
+                        player.action = PlayerAction::Idle;
+                    }
                 } else {
                     player.action = PlayerAction::Idle;
                 }
@@ -109,6 +126,16 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
         }
         if let Some((object_entity, target_pos)) = retry_scavenge {
             retry_scavenge_path(world, player_id, object_entity, target_pos);
+        }
+        if let Some((npc_entity, target_pos)) = retry_talk {
+            if retry_talk_path(world, player_id, npc_entity, target_pos) {
+                pending_talks.push((player_id, npc_entity));
+            }
+        }
+        for (pid, npc_entity) in pending_talks {
+            for msg in crate::quest::handle_talk_to_npc(world, pid, npc_entity) {
+                messages.push((MessageTarget::Player(pid), msg));
+            }
         }
     }
     for (pid, pos) in moved_players {
@@ -178,7 +205,7 @@ pub fn handle_client_message(
         }
         ClientMessage::TalkToNpc { npc_entity } => {
             out.extend(
-                crate::quest::handle_talk_to_npc(world, player_id, npc_entity)
+                handle_talk(world, player_id, npc_entity)
                     .into_iter()
                     .map(route),
             );
@@ -367,6 +394,7 @@ fn handle_walk(
             attack_target: None,
             attack_style: None,
             scavenge_target: None,
+            talk_target: None,
         };
         player.ticks_stationary = 0;
     }
@@ -473,6 +501,28 @@ fn try_begin_scavenge_from_walk(
     };
 }
 
+fn try_complete_talk_from_walk(
+    player: &mut openmmo_common::PlayerState,
+    npc_entity: EntityId,
+    npc_pos: Option<TilePos>,
+) -> bool {
+    let PlayerAction::Walking { talk_target, .. } = &player.action else {
+        return false;
+    };
+    if *talk_target != Some(npc_entity) {
+        return false;
+    }
+    let Some(npc_pos) = npc_pos else {
+        player.action = PlayerAction::Idle;
+        return false;
+    };
+    if player.position.chebyshev_distance(&npc_pos) > 1 {
+        return false;
+    }
+    player.action = PlayerAction::Idle;
+    true
+}
+
 fn retry_attack_path(
     world: &mut GameWorld,
     player_id: PlayerId,
@@ -496,6 +546,7 @@ fn retry_attack_path(
             attack_target: Some(target),
             attack_style: Some(style),
             scavenge_target: None,
+            talk_target: None,
         };
     } else {
         player.action = PlayerAction::Combat {
@@ -529,6 +580,7 @@ fn retry_scavenge_path(
             attack_target: None,
             attack_style: None,
             scavenge_target: Some(object_entity),
+            talk_target: None,
         };
     } else if player.position.chebyshev_distance(&target_pos) <= 1 {
         if let Some(ticks) = ticks {
@@ -542,6 +594,93 @@ fn retry_scavenge_path(
     } else {
         player.action = PlayerAction::Idle;
     }
+}
+
+fn retry_talk_path(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    npc_entity: EntityId,
+    target_pos: TilePos,
+) -> bool {
+    let player_pos = match world.players.get(&player_id) {
+        Some(p) => p.position,
+        None => return false,
+    };
+    let walkable = world.walkable_for_player(player_id);
+    let path = find_attack_path(player_pos, target_pos, &walkable);
+    let Some(player) = world.players.get_mut(&player_id) else {
+        return false;
+    };
+    if path.len() > 1 {
+        player.action = PlayerAction::Walking {
+            path,
+            index: 0,
+            attack_target: None,
+            attack_style: None,
+            scavenge_target: None,
+            talk_target: Some(npc_entity),
+        };
+        false
+    } else if player.position.chebyshev_distance(&target_pos) <= 1 {
+        player.action = PlayerAction::Idle;
+        true
+    } else {
+        player.action = PlayerAction::Idle;
+        false
+    }
+}
+
+fn is_friendly_npc(world: &GameWorld, npc_entity: EntityId) -> Option<TilePos> {
+    let npc = world.npcs.get(&npc_entity)?;
+    if !npc.alive {
+        return None;
+    }
+    let def = world.content.npc(npc.npc_id)?;
+    if def.aggro_range > 0 {
+        return None;
+    }
+    Some(npc.position)
+}
+
+fn handle_talk(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    npc_entity: EntityId,
+) -> Vec<ServerMessage> {
+    let npc_pos = match is_friendly_npc(world, npc_entity) {
+        Some(pos) => pos,
+        None => return Vec::new(),
+    };
+    let player = match world.players.get(&player_id) {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+    let player_pos = player.position;
+
+    if player_pos.chebyshev_distance(&npc_pos) <= 1 {
+        return crate::quest::handle_talk_to_npc(world, player_id, npc_entity);
+    }
+
+    let walkable = world.walkable_for_player(player_id);
+    let path = find_attack_path(player_pos, npc_pos, &walkable);
+    let Some(player) = world.players.get_mut(&player_id) else {
+        return Vec::new();
+    };
+    if path.len() > 1 {
+        player.action = PlayerAction::Walking {
+            path,
+            index: 0,
+            attack_target: None,
+            attack_style: None,
+            scavenge_target: None,
+            talk_target: Some(npc_entity),
+        };
+        player.ticks_stationary = 0;
+    } else if player.position.chebyshev_distance(&npc_pos) <= 1 {
+        drop(player);
+        return crate::quest::handle_talk_to_npc(world, player_id, npc_entity);
+    }
+    Vec::new()
 }
 
 fn handle_scavenge(
@@ -611,6 +750,7 @@ fn handle_scavenge(
             attack_target: None,
             attack_style: None,
             scavenge_target: Some(object_entity),
+            talk_target: None,
         };
         player.ticks_stationary = 0;
     } else if player.position.chebyshev_distance(&object_pos) <= 1 {
@@ -706,6 +846,7 @@ fn handle_attack(
             attack_target: Some(target),
             attack_style: Some(style),
             scavenge_target: None,
+            talk_target: None,
         };
         player.ticks_stationary = 0;
     } else {
@@ -2188,6 +2329,67 @@ mod routing_tests {
         assert!(
             reached_scavenge,
             "player should reach scavenge range and begin scavenging"
+        );
+    }
+
+    #[test]
+    fn talk_out_of_range_walks_to_npc_then_dialogue() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content.clone());
+        world.quests.load(&content);
+
+        let (entity_id, npc_pos) = world
+            .npcs
+            .iter()
+            .find_map(|(eid, n)| {
+                world
+                    .content
+                    .npc(n.npc_id)
+                    .filter(|d| d.aggro_range == 0)
+                    .map(|_| (*eid, n.position))
+            })
+            .expect("friendly npc");
+
+        let pid = PlayerId(Uuid::from_u128(1));
+        let mut player = test_player(1);
+        player.position = TilePos::new(npc_pos.x, npc_pos.y + 8);
+        player.last_position = player.position;
+        world.players.insert(pid, player);
+
+        let msgs = handle_client_message(
+            &mut world,
+            pid,
+            ClientMessage::TalkToNpc {
+                npc_entity: entity_id,
+            },
+        );
+        assert!(msgs.is_empty());
+
+        let action = &world.players.get(&pid).unwrap().action;
+        let openmmo_common::PlayerAction::Walking { talk_target, .. } = action else {
+            panic!("expected walking toward talk target, got {action:?}");
+        };
+        assert_eq!(*talk_target, Some(entity_id));
+
+        let mut received_dialogue = false;
+        for _ in 0..50 {
+            let tick_msgs = process_tick(&mut world);
+            if tick_msgs.iter().any(|(_, msg)| {
+                matches!(msg, ServerMessage::Dialogue { .. })
+            }) {
+                let player = world.players.get(&pid).unwrap();
+                let dist = player
+                    .position
+                    .chebyshev_distance(&world.npcs.get(&entity_id).unwrap().position);
+                assert!(dist <= 1);
+                received_dialogue = true;
+                break;
+            }
+        }
+        assert!(
+            received_dialogue,
+            "player should reach talk range and receive dialogue"
         );
     }
 

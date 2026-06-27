@@ -468,6 +468,10 @@ impl EngineApp {
         })
     }
 
+    fn close_shop_on_world_interaction(&mut self) {
+        self.ui.open_shop = None;
+    }
+
     fn handle_entity_click(&self, entity_id: openmmo_common::EntityId) -> Option<ClientMessage> {
         let entity = self.entities.iter().find(|e| e.entity_id == entity_id)?;
         match &entity.kind {
@@ -758,6 +762,7 @@ impl EngineApp {
                 self.send(ClientMessage::JoinMinigame { minigame_id });
             }
             UiAction::ContextMenu(menu_action) => {
+                self.close_shop_on_world_interaction();
                 self.send(to_client_message(menu_action));
             }
             UiAction::Connect => {}
@@ -815,14 +820,17 @@ impl EngineApp {
                 self.local_player,
             ) {
                 if let Some(msg) = self.handle_entity_click(entity_id) {
+                    self.close_shop_on_world_interaction();
                     self.send(msg);
                 } else if let Some(target) = tile {
                     if self.local_player_position() != Some(target) {
+                        self.close_shop_on_world_interaction();
                         self.send(ClientMessage::WalkIntent { target });
                     }
                 }
             } else if let Some(target) = tile {
                 if self.local_player_position() != Some(target) {
+                    self.close_shop_on_world_interaction();
                     self.send(ClientMessage::WalkIntent { target });
                 }
             }
