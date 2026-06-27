@@ -28,6 +28,7 @@ fn main() -> anyhow::Result<()> {
     });
 
     let mut app = EngineApp::default();
+    app.content = content;
     app.region = region;
     app.net_tx = Some(net_tx);
     app.net_rx = Some(msg_rx);
