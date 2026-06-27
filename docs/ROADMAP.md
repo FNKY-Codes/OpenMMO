@@ -103,7 +103,7 @@ This document tracks planned work, current delivery status, and recommended prio
 | Feature | Protocol | Server logic | Client UI | Settlement |
 |---------|----------|--------------|-----------|------------|
 | Grand Exchange | Yes | Offer matching + transfer | Market panel wired | Item/currency transfer |
-| Player trading | Yes | Bilateral accept + swap | Friends panel wired | Both sides receive items |
+| Player trading | Yes | Bilateral accept + swap | Trade panel with offer/add/accept | Both sides receive items |
 | Friends / PMs | Yes | Friend add + PM routing | Friends panel wired | Per-recipient PM delivery |
 | Ledger contracts | Yes | Kill progress tracking | Status in HUD | Per-player updates |
 | Arena minigame | Yes | Boss spawn + phases | Join button wired | Boss in snapshots + combat |
@@ -111,7 +111,6 @@ This document tracks planned work, current delivery status, and recommended prio
 
 ### Remaining polish
 
-- Trade offer UI (adding items to trade window) not yet in HUD — accept/request only
 - GE matching edge cases need more playtesting
 - Second region beyond `verdant_reach.yaml`
 

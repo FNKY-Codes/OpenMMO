@@ -4,7 +4,7 @@ use egui_wgpu::wgpu;
 use egui_wgpu::Renderer as EguiRenderer;
 use egui_winit::winit;
 use egui_winit::State as EguiWinitState;
-use openmmo_common::{EntityKind, RegionDef, WorldEntity};
+use openmmo_common::{ContentPack, EntityKind, Equipment, RegionDef, WorldEntity};
 use openmmo_protocol::{ClientMessage, ServerMessage};
 
 use egui_winit::egui;
@@ -12,7 +12,7 @@ use egui_winit::egui;
 use crate::{
     input::InputState,
     renderer::Renderer,
-    ui::{GameUi, UiAction},
+    ui::{setup_theme, GameUi, UiAction},
 };
 
 #[derive(Debug)]
@@ -28,11 +28,13 @@ pub enum NetCommand {
 pub struct EngineApp {
     input: InputState,
     pub ui: GameUi,
+    pub content: ContentPack,
     pub entities: Vec<WorldEntity>,
     pub region: Option<RegionDef>,
     pub local_player: Option<openmmo_common::PlayerId>,
     pub inventory: openmmo_common::Inventory,
     pub bank: openmmo_common::Inventory,
+    pub equipment: Equipment,
     pub skills: openmmo_common::SkillBook,
     pub hp: u32,
     pub max_hp: u32,
@@ -46,11 +48,13 @@ impl Default for EngineApp {
         Self {
             input: InputState::default(),
             ui: GameUi::default(),
+            content: ContentPack::default(),
             entities: Vec::new(),
             region: None,
             local_player: None,
             inventory: openmmo_common::Inventory::new(openmmo_common::INVENTORY_SIZE),
             bank: openmmo_common::Inventory::new(openmmo_common::BANK_SIZE),
+            equipment: Equipment::default(),
             skills: openmmo_common::SkillBook::new_mvp(),
             hp: 10,
             max_hp: 10,
@@ -75,6 +79,7 @@ impl EngineApp {
         );
         let mut renderer = pollster::block_on(Renderer::new(window.clone()));
         let egui_ctx = egui::Context::default();
+        setup_theme(&egui_ctx);
         let mut egui_state = EguiWinitState::new(
             egui_ctx.clone(),
             egui::ViewportId::ROOT,
@@ -244,10 +249,13 @@ impl EngineApp {
                 }
             }
             ServerMessage::InventoryUpdate {
-                inventory, bank, ..
+                inventory,
+                bank,
+                equipment,
             } => {
                 self.inventory = inventory;
                 self.bank = bank;
+                self.equipment = equipment;
             }
             ServerMessage::SkillUpdate {
                 skills,
@@ -333,7 +341,10 @@ impl EngineApp {
                 points,
                 active_contract,
             } => {
-                if let Some(c) = active_contract {
+                self.ui.ledger_rank = rank;
+                self.ui.ledger_points = points;
+                self.ui.ledger_contract = active_contract;
+                if let Some(c) = &self.ui.ledger_contract {
                     self.ui.status =
                         format!("Ledger rank {rank} ({points} pts): {} left {}", c.name, c.remaining);
                 }
@@ -481,8 +492,10 @@ impl EngineApp {
             } else {
                 ui_action = self.ui.draw_hud(
                     ctx,
+                    &self.content,
                     &self.inventory,
                     &self.bank,
+                    &self.equipment,
                     &self.skills,
                     self.hp,
                     self.max_hp,
@@ -514,6 +527,9 @@ impl EngineApp {
             }
             UiAction::EquipItem(slot) => {
                 self.send(ClientMessage::EquipItem { inv_slot: slot });
+            }
+            UiAction::UnequipItem(slot) => {
+                self.send(ClientMessage::UnequipItem { slot });
             }
             UiAction::BankDeposit { inv_slot, quantity } => {
                 self.send(ClientMessage::BankDeposit { inv_slot, quantity });
@@ -576,6 +592,15 @@ impl EngineApp {
                     });
                 } else {
                     self.ui.status = format!("Player '{name}' not found nearby");
+                }
+            }
+            UiAction::TradeOffer { items } => {
+                if let Some(name) = self.ui.trade_partner.clone() {
+                    if let Some(target) = self.player_id_by_name(&name) {
+                        self.send(ClientMessage::TradeOffer { target, items });
+                    } else {
+                        self.ui.status = format!("Trade partner '{name}' not found");
+                    }
                 }
             }
             UiAction::TradeAccept => {
