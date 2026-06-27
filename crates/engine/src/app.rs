@@ -593,6 +593,7 @@ impl EngineApp {
             &self.entities,
             self.local_player,
             &self.movement_interp,
+            Some(renderer.camera().facing_yaw()),
             self.compute_hover(renderer),
         );
 

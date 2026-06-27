@@ -299,9 +299,12 @@ impl PlayerModel {
     }
 }
 
-pub fn player_model_matrix(base: [f32; 3], _model: &PlayerModel) -> Mat4 {
+/// Y-axis rotation offset if the GLB mesh forward axis differs from +Z.
+const MODEL_YAW_OFFSET: f32 = 0.0;
+
+pub fn player_model_matrix(base: [f32; 3], yaw: f32) -> Mat4 {
     let [cx, surface_y, cz] = base;
-    Mat4::translation(cx, surface_y, cz)
+    Mat4::translation(cx, surface_y, cz).mul(Mat4::rotation_y(yaw + MODEL_YAW_OFFSET))
 }
 
 fn load_mesh_data(path: &Path) -> Result<MeshData> {
