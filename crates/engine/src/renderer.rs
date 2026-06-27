@@ -305,7 +305,20 @@ impl Renderer {
             self.build_test_map(&mut vertices);
         }
 
+        let mut local_entity = None;
         for entity in entities {
+            let is_local = matches!(
+                &entity.kind,
+                openmmo_common::EntityKind::Player { player_id, .. }
+                    if Some(*player_id) == local_player
+            );
+            if is_local {
+                local_entity = Some(entity);
+            } else {
+                self.build_entity(entity, &mut vertices, local_player);
+            }
+        }
+        if let Some(entity) = local_entity {
             self.build_entity(entity, &mut vertices, local_player);
         }
 

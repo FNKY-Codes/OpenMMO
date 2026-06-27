@@ -19,14 +19,20 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
     crate::anticheat::PluginApi::on_tick(world);
 
     let mut moved_players = Vec::new();
+    let occupied = world.entity_occupied_tiles();
     for player in world.players.values_mut() {
         if let PlayerAction::Walking { path, index } = &mut player.action {
             if *index + 1 < path.len() {
-                *index += 1;
-                player.position = path[*index];
-                player.last_position = player.position;
-                player.ticks_stationary = 1;
-                moved_players.push((player.id, player.position));
+                let next_pos = path[*index + 1];
+                if occupied.contains(&next_pos) && next_pos != player.position {
+                    player.action = PlayerAction::Idle;
+                } else {
+                    *index += 1;
+                    player.position = path[*index];
+                    player.last_position = player.position;
+                    player.ticks_stationary = 1;
+                    moved_players.push((player.id, player.position));
+                }
             } else {
                 player.action = PlayerAction::Idle;
             }
@@ -273,7 +279,7 @@ fn handle_walk(
     player_id: PlayerId,
     target: TilePos,
 ) -> Option<ServerMessage> {
-    let walkable = world.walkable.clone();
+    let walkable = world.walkable_for_player(player_id);
     let player = world.players.get_mut(&player_id)?;
     if !crate::anticheat::validate_walk(player, target) {
         return Some(ServerMessage::Error {

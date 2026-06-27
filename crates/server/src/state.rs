@@ -257,6 +257,34 @@ impl GameWorld {
     pub fn is_walkable(&self, pos: TilePos) -> bool {
         self.walkable.contains(&pos)
     }
+
+    /// Tiles currently occupied by living NPCs and bosses.
+    pub fn entity_occupied_tiles(&self) -> HashSet<TilePos> {
+        let mut occupied = HashSet::new();
+        for npc in self.npcs.values() {
+            if npc.alive {
+                occupied.insert(npc.position);
+            }
+        }
+        if let Some(boss) = &self.boss {
+            if boss.hp > 0 {
+                occupied.insert(boss.position);
+            }
+        }
+        occupied
+    }
+
+    /// Walkable tiles for a player, excluding tiles occupied by NPCs/bosses
+    /// (except the player's current tile).
+    pub fn walkable_for_player(&self, player_id: PlayerId) -> HashSet<TilePos> {
+        let occupied = self.entity_occupied_tiles();
+        let player_pos = self.players.get(&player_id).map(|p| p.position);
+        self.walkable
+            .iter()
+            .filter(|tile| player_pos == Some(**tile) || !occupied.contains(*tile))
+            .copied()
+            .collect()
+    }
 }
 
 pub type SharedWorld = Arc<RwLock<GameWorld>>;
