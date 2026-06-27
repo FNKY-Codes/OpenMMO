@@ -106,12 +106,6 @@ impl EntityMovementInterp {
         Some([cx, surface_y, cz])
     }
 
-    pub fn is_moving(&self, id: EntityId, now: Instant) -> bool {
-        self.entries.get(&id).is_some_and(|entry| {
-            entry.from != entry.to && progress(entry.started_at, now) < 1.0
-        })
-    }
-
     pub fn visual_facing_yaw(&self, id: EntityId, now: Instant) -> Option<f32> {
         let entry = self.entries.get(&id)?;
         if entry.from != entry.to && progress(entry.started_at, now) < 1.0 {
