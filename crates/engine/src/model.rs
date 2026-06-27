@@ -578,6 +578,15 @@ fn normalize_mesh_to_footprint(
         v.position[1] = (v.position[1] - min[1]) / height_y * target_height;
         v.position[2] = (v.position[2] - min[2]) / depth_z * footprint_h;
     }
+
+    // Center the mesh on the footprint anchor so world placement at the footprint
+    // center aligns the model with the occupied tiles (not offset toward +X/+Z).
+    let half_w = footprint_w * 0.5;
+    let half_h = footprint_h * 0.5;
+    for v in vertices.iter_mut() {
+        v.position[0] -= half_w;
+        v.position[2] -= half_h;
+    }
 }
 
 fn normalize_mesh(vertices: &mut [ModelVertex], target_height: f32) {
@@ -645,6 +654,38 @@ fn upload_texture(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_mesh_to_footprint_centers_on_origin() {
+        let mut vertices = vec![
+            ModelVertex {
+                position: [0.0, 0.0, 0.0],
+                normal: [0.0, 1.0, 0.0],
+                uv: [0.0, 0.0],
+            },
+            ModelVertex {
+                position: [1.0, 2.0, 1.0],
+                normal: [0.0, 1.0, 0.0],
+                uv: [1.0, 1.0],
+            },
+        ];
+        normalize_mesh_to_footprint(&mut vertices, 2.0, 2.0, 1.8);
+
+        let mut min = [f32::MAX; 3];
+        let mut max = [f32::MIN; 3];
+        for v in &vertices {
+            for axis in 0..3 {
+                min[axis] = min[axis].min(v.position[axis]);
+                max[axis] = max[axis].max(v.position[axis]);
+            }
+        }
+        assert!((min[0] + 1.0).abs() < 1e-5);
+        assert!((max[0] - 1.0).abs() < 1e-5);
+        assert!((min[2] + 1.0).abs() < 1e-5);
+        assert!((max[2] - 1.0).abs() < 1e-5);
+        assert!((min[1]).abs() < 1e-5);
+        assert!((max[1] - 1.8).abs() < 1e-5);
+    }
 
     #[test]
     fn compile_time_asset_path_exists() {
