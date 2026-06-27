@@ -1052,6 +1052,7 @@ fn tick_npc_respawn(world: &mut GameWorld) {
                     npc.alive = true;
                     npc.hp = def.max_hp;
                     npc.aggro_target = None;
+                    npc.position = npc.home_position;
                 }
             }
         }
@@ -1630,5 +1631,39 @@ mod routing_tests {
             }
         }
         assert_eq!(world.npcs.get(&entity_id).unwrap().position, home);
+    }
+
+    #[test]
+    fn npc_respawns_at_home_tile() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content);
+
+        let entity_id = world
+            .npcs
+            .iter()
+            .find(|(_, n)| {
+                world
+                    .content
+                    .npc(n.npc_id)
+                    .map(|d| d.aggro_range > 0)
+                    .unwrap_or(false)
+            })
+            .map(|(eid, _)| *eid)
+            .expect("hostile npc");
+
+        let home = world.npcs.get(&entity_id).unwrap().home_position;
+        {
+            let npc = world.npcs.get_mut(&entity_id).unwrap();
+            npc.position = TilePos::new(home.x + 5, home.y + 5);
+            npc.alive = false;
+            npc.hp = 0;
+            npc.respawn_ticks = 1;
+        }
+
+        process_tick(&mut world);
+        let npc = world.npcs.get(&entity_id).unwrap();
+        assert!(npc.alive);
+        assert_eq!(npc.position, home);
     }
 }
