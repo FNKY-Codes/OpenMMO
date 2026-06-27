@@ -9,6 +9,7 @@ use crate::entity_bounds;
 use crate::math::Mat4;
 
 const TARGET_PLAYER_HEIGHT: f32 = 1.8;
+const TARGET_NPC_HEIGHT: f32 = 1.6;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -27,12 +28,19 @@ pub struct ModelUniforms {
     pub _padding: [f32; 4],
 }
 
-pub struct PlayerDraw {
+pub struct ModelDraw {
+    pub target: ModelTarget,
     pub model: Mat4,
     pub tint: [f32; 4],
 }
 
-pub struct PlayerModel {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModelTarget {
+    Player,
+    Npc(openmmo_common::NpcId),
+}
+
+pub struct GlbModel {
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub vertex_buffer: wgpu::Buffer,
@@ -52,7 +60,14 @@ struct MeshData {
     texture: image::DynamicImage,
 }
 
+/// Back-compat alias for the player mesh loader.
+pub type PlayerModel = GlbModel;
+
 const DEFAULT_PLAYER_MODEL: &str = "Pinguin_001.glb";
+pub const MUTANT_TIGER_MODEL: &str = "Tiger_001.glb";
+
+/// NPC id 1 (meadow crawler / Mutant Tiger) uses this model.
+pub const MUTANT_TIGER_NPC_ID: openmmo_common::NpcId = openmmo_common::NpcId(1);
 
 /// Resolve the player GLB path from env, workspace layout, cwd, or executable location.
 pub fn resolve_player_model_path() -> Option<PathBuf> {
@@ -64,45 +79,40 @@ pub fn resolve_player_model_path() -> Option<PathBuf> {
         eprintln!("OpenMMO: OPENMMO_PLAYER_MODEL points to missing file: {env}");
     }
 
-    for candidate in player_model_candidates() {
+    resolve_model_path(DEFAULT_PLAYER_MODEL)
+}
+
+pub fn resolve_model_path(filename: &str) -> Option<PathBuf> {
+    for candidate in model_candidates(filename) {
         if candidate.is_file() {
             return candidate.canonicalize().ok().or(Some(candidate));
         }
     }
-
-    eprintln!(
-        "OpenMMO: player model not found (tried {} locations); using cube fallback. \
-         Place assets/models/{DEFAULT_PLAYER_MODEL} in the project root or set OPENMMO_PLAYER_MODEL.",
-        player_model_candidates().len()
-    );
     None
 }
 
-fn player_model_candidates() -> Vec<PathBuf> {
+fn model_candidates(filename: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     candidates.push(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/models")
-            .join(DEFAULT_PLAYER_MODEL),
+            .join(filename),
     );
 
     if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("assets/models").join(DEFAULT_PLAYER_MODEL));
+        candidates.push(cwd.join("assets/models").join(filename));
         let mut dir = Some(cwd.as_path());
         while let Some(d) = dir {
-            candidates.push(d.join("assets/models").join(DEFAULT_PLAYER_MODEL));
+            candidates.push(d.join("assets/models").join(filename));
             dir = d.parent();
         }
     }
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("assets/models").join(DEFAULT_PLAYER_MODEL));
-            candidates.push(
-                dir.join("../../assets/models")
-                    .join(DEFAULT_PLAYER_MODEL),
-            );
+            candidates.push(dir.join("assets/models").join(filename));
+            candidates.push(dir.join("../../assets/models").join(filename));
         }
     }
 
@@ -114,10 +124,33 @@ pub fn load_player_model(
     queue: &wgpu::Queue,
     surface_format: wgpu::TextureFormat,
     path: &Path,
-) -> Result<PlayerModel> {
-    let mesh = load_mesh_data(path)?;
+) -> Result<GlbModel> {
+    let model = load_glb_model(device, queue, surface_format, path, TARGET_PLAYER_HEIGHT)?;
+    entity_bounds::set_player_model_dims(model.width, model.height);
+    Ok(model)
+}
+
+pub fn load_npc_model(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    surface_format: wgpu::TextureFormat,
+    npc_id: openmmo_common::NpcId,
+    path: &Path,
+) -> Result<GlbModel> {
+    let model = load_glb_model(device, queue, surface_format, path, TARGET_NPC_HEIGHT)?;
+    entity_bounds::set_npc_model_dims(npc_id, model.width, model.height);
+    Ok(model)
+}
+
+pub fn load_glb_model(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    surface_format: wgpu::TextureFormat,
+    path: &Path,
+    target_height: f32,
+) -> Result<GlbModel> {
+    let mesh = load_mesh_data(path, target_height)?;
     let (width, height) = compute_bounds(&mesh.vertices);
-    entity_bounds::set_player_model_dims(width, height);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Player Model Shader"),
@@ -250,7 +283,7 @@ pub fn load_player_model(
         ],
     });
 
-    Ok(PlayerModel {
+    Ok(GlbModel {
         pipeline,
         bind_group_layout,
         vertex_buffer,
@@ -265,13 +298,13 @@ pub fn load_player_model(
     })
 }
 
-impl PlayerModel {
+impl GlbModel {
     pub fn draw_instances(
         &self,
         render_pass: &mut wgpu::RenderPass<'_>,
         queue: &wgpu::Queue,
         view_proj: Mat4,
-        instances: &[PlayerDraw],
+        instances: &[ModelDraw],
     ) {
         if instances.is_empty() || self.index_count == 0 {
             return;
@@ -282,32 +315,52 @@ impl PlayerModel {
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
         for instance in instances {
-            let uniforms = ModelUniforms {
-                view_proj: view_proj.cols,
-                model: instance.model.cols,
-                tint: instance.tint,
-                _padding: [0.0; 4],
-            };
-            queue.write_buffer(
-                &self.uniform_buffer,
-                0,
-                bytemuck::bytes_of(&uniforms),
-            );
-            render_pass.set_bind_group(0, &self.bind_group, &[]);
-            render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+            self.draw_one(render_pass, queue, view_proj, instance);
         }
+    }
+
+    pub fn draw_one(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        queue: &wgpu::Queue,
+        view_proj: Mat4,
+        instance: &ModelDraw,
+    ) {
+        if self.index_count == 0 {
+            return;
+        }
+        render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        let uniforms = ModelUniforms {
+            view_proj: view_proj.cols,
+            model: instance.model.cols,
+            tint: instance.tint,
+            _padding: [0.0; 4],
+        };
+        queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms),
+        );
+        render_pass.set_bind_group(0, &self.bind_group, &[]);
+        render_pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
 }
 
 /// Y-axis rotation offset if the GLB mesh forward axis differs from +Z.
 const MODEL_YAW_OFFSET: f32 = 0.0;
 
-pub fn player_model_matrix(base: [f32; 3], yaw: f32) -> Mat4 {
+pub fn entity_model_matrix(base: [f32; 3], yaw: f32) -> Mat4 {
     let [cx, surface_y, cz] = base;
     Mat4::translation(cx, surface_y, cz).mul(Mat4::rotation_y(yaw + MODEL_YAW_OFFSET))
 }
 
-fn load_mesh_data(path: &Path) -> Result<MeshData> {
+pub fn player_model_matrix(base: [f32; 3], yaw: f32) -> Mat4 {
+    entity_model_matrix(base, yaw)
+}
+
+fn load_mesh_data(path: &Path, target_height: f32) -> Result<MeshData> {
     let (document, buffers, images) = gltf::import(path).context("failed to import glb")?;
 
     let mut vertices = Vec::new();
@@ -332,7 +385,7 @@ fn load_mesh_data(path: &Path) -> Result<MeshData> {
         material_fallback_texture(&document)
     };
 
-    normalize_mesh(&mut vertices, TARGET_PLAYER_HEIGHT);
+    normalize_mesh(&mut vertices, target_height);
 
     Ok(MeshData {
         vertices,
@@ -599,9 +652,26 @@ mod tests {
     }
 
     #[test]
+    fn resolve_tiger_model_path() {
+        let path = resolve_model_path(MUTANT_TIGER_MODEL).expect("tiger model should resolve");
+        assert!(path.is_file(), "resolved path missing: {path:?}");
+    }
+
+    #[test]
+    fn tiger_glb_loads_geometry() {
+        let path = resolve_model_path(MUTANT_TIGER_MODEL).expect("tiger model should resolve");
+        let mesh = load_mesh_data(&path, TARGET_NPC_HEIGHT).expect("mesh load");
+        assert!(!mesh.vertices.is_empty());
+        assert!(!mesh.indices.is_empty());
+        let (width, height) = compute_bounds(&mesh.vertices);
+        assert!((height - TARGET_NPC_HEIGHT).abs() < 0.01);
+        assert!(width > 0.0);
+    }
+
+    #[test]
     fn penguin_glb_loads_geometry() {
         let path = resolve_player_model_path().expect("penguin model should resolve");
-        let mesh = load_mesh_data(&path).expect("mesh load");
+        let mesh = load_mesh_data(&path, TARGET_PLAYER_HEIGHT).expect("mesh load");
         assert!(!mesh.vertices.is_empty());
         assert!(!mesh.indices.is_empty());
         let (width, height) = compute_bounds(&mesh.vertices);

@@ -20,7 +20,7 @@ stages:
       recipe_id: timber_to_plank
       count: 1
   - stage: 4
-    description: Defeat a Meadow Crawler in combat.
+    description: Defeat a Mutant Tiger in combat.
     objective:
       type: kill_npc
       npc_id: 1
