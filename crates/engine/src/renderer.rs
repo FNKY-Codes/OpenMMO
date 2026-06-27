@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
-use openmmo_common::{EntityId, NpcId, RegionDef, TilePos, WorldEntity};
+use openmmo_common::{ContentPack, EntityId, NpcFootprint, NpcId, RegionDef, TilePos, WorldEntity};
 
 use crate::camera::Camera;
 use crate::entity_bounds;
@@ -85,6 +85,7 @@ impl Renderer {
     pub async fn new(
         window: std::sync::Arc<egui_winit::winit::window::Window>,
         player_model_path: Option<&std::path::Path>,
+        content: &ContentPack,
     ) -> Self {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -342,12 +343,17 @@ impl Renderer {
 
         let mut npc_models = HashMap::new();
         if let Some(path) = resolve_model_path(MUTANT_TIGER_MODEL) {
+            let footprint = content
+                .npc(MUTANT_TIGER_NPC_ID)
+                .map(NpcFootprint::from_def)
+                .unwrap_or_default();
             match load_npc_model(
                 &device,
                 &queue,
                 format,
                 MUTANT_TIGER_NPC_ID,
                 &path,
+                footprint,
             ) {
                 Ok(model) => {
                     eprintln!(
@@ -485,6 +491,7 @@ impl Renderer {
         entities: &[WorldEntity],
         local_player: Option<openmmo_common::PlayerId>,
         movement_interp: &EntityMovementInterp,
+        content: &ContentPack,
         hover: Option<HoverTarget>,
     ) {
         let vp = self
@@ -562,6 +569,7 @@ impl Renderer {
                     &mut transparent_draws,
                     &mut model_draws,
                     local_player,
+                    content,
                 );
             }
         }
@@ -579,6 +587,7 @@ impl Renderer {
                 &mut transparent_draws,
                 &mut model_draws,
                 local_player,
+                content,
             );
         }
 
@@ -604,6 +613,7 @@ impl Renderer {
                 region,
                 entities,
                 movement_interp,
+                content,
                 now,
                 &mut hover_outline_vertices,
             );
@@ -730,6 +740,7 @@ impl Renderer {
         region: Option<&RegionDef>,
         entities: &[WorldEntity],
         movement_interp: &EntityMovementInterp,
+        content: &ContentPack,
         now: Instant,
         vertices: &mut Vec<Vertex>,
     ) {
@@ -737,21 +748,29 @@ impl Renderer {
             HoverTarget::Entity(entity_id) => {
                 let entity = entities.iter().find(|e| e.entity_id == entity_id);
                 if let Some(entity) = entity {
+                    let footprint = entity_footprint(content, entity);
                     let visual_base = movement_interp
-                        .visual_center(entity.entity_id, now, region)
+                        .visual_center(entity.entity_id, now, region, footprint)
                         .or_else(|| {
                             entity_bounds::entity_tile(entity).map(|tile| {
-                                let [cx, _, cz] = Self::tile_center(tile);
                                 let surface_y = Self::tile_surface_height(tile, region);
-                                [cx, surface_y, cz]
+                                footprint
+                                    .unwrap_or_default()
+                                    .world_center(tile, surface_y)
                             })
                         });
                     if let Some([cx, surface_y, cz]) = visual_base {
                         let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
+                        let fp = footprint.unwrap_or_default();
                         let scale = 1.08;
                         let center = [cx, surface_y + height * 0.5, cz];
-                        let size = [width * scale, height * scale, width * scale];
+                        let size = [
+                            fp.width as f32 * scale,
+                            height * scale,
+                            fp.height as f32 * scale,
+                        ];
                         add_box_edge_lines(center, size, HOVER_OUTLINE_COLOR, vertices, true);
+                        let _ = width;
                     }
                 }
             }
@@ -817,14 +836,17 @@ impl Renderer {
         transparent_draws: &mut Vec<TransparentDraw>,
         model_draws: &mut Vec<ModelDraw>,
         local_player: Option<openmmo_common::PlayerId>,
+        content: &ContentPack,
     ) {
+        let footprint = entity_footprint(content, entity);
         let visual_base = movement_interp
-            .visual_center(entity.entity_id, now, region)
+            .visual_center(entity.entity_id, now, region, footprint)
             .or_else(|| {
                 entity_bounds::entity_tile(entity).map(|tile| {
-                    let [cx, _, cz] = Self::tile_center(tile);
                     let surface_y = Self::tile_surface_height(tile, region);
-                    [cx, surface_y, cz]
+                    footprint
+                        .unwrap_or_default()
+                        .world_center(tile, surface_y)
                 })
             });
 
@@ -1157,5 +1179,14 @@ fn push_line(a: [f32; 3], b: [f32; 3], color: [f32; 4], vertices: &mut Vec<Verte
 fn push_tri(a: [f32; 3], b: [f32; 3], c: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
     for position in [a, b, c] {
         vertices.push(Vertex { position, color });
+    }
+}
+
+fn entity_footprint(content: &ContentPack, entity: &WorldEntity) -> Option<NpcFootprint> {
+    match &entity.kind {
+        openmmo_common::EntityKind::Npc { npc_id, .. } => {
+            content.npc(*npc_id).map(NpcFootprint::from_def)
+        }
+        _ => None,
     }
 }

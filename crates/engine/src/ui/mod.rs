@@ -332,6 +332,7 @@ pub fn draw_combat_health_bars(
     entities: &[WorldEntity],
     movement_interp: &EntityMovementInterp,
     region: Option<&RegionDef>,
+    content: &ContentPack,
     view_proj: math::Mat4,
     width: u32,
     height: u32,
@@ -349,7 +350,7 @@ pub fn draw_combat_health_bars(
         let Some((hp, max_hp)) = entity_hp(entity) else {
             continue;
         };
-        let Some(anchor) = entity_health_anchor(entity, movement_interp, region, now) else {
+        let Some(anchor) = entity_health_anchor(entity, movement_interp, region, content, now) else {
             continue;
         };
         let Some((screen_x, screen_y)) =
@@ -384,10 +385,16 @@ fn entity_health_anchor(
     entity: &WorldEntity,
     movement_interp: &EntityMovementInterp,
     region: Option<&RegionDef>,
+    content: &ContentPack,
     now: Instant,
 ) -> Option<Vec3> {
     let (_, height) = entity_bounds::entity_cube_dims(&entity.kind);
-    let [cx, surface_y, cz] = movement_interp.visual_center(entity.entity_id, now, region)?;
+    let footprint = match &entity.kind {
+        EntityKind::Npc { npc_id, .. } => content.npc(*npc_id).map(openmmo_common::NpcFootprint::from_def),
+        _ => None,
+    };
+    let [cx, surface_y, cz] =
+        movement_interp.visual_center(entity.entity_id, now, region, footprint)?;
     Some(Vec3::new(cx, surface_y + height + 0.15, cz))
 }
 

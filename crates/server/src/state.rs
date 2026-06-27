@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use openmmo_common::{
-    BossState, ContentPack, EntityId, EntityKind, GroundItem, MarketOffer, MinigameLobby, NpcId,
+    BossState, ContentPack, EntityId, EntityKind, GroundItem, MarketOffer, MinigameLobby, NpcFootprint, NpcId,
     NpcState, ObjectId, ObjectState, PlayerAction, PlayerId, PlayerState, QuestId, RegionDef,
     RegionId, Skill, SkillBook, TilePos, WorldEntity, INVENTORY_SIZE,
 };
@@ -262,14 +262,26 @@ impl GameWorld {
 
     /// Tiles currently occupied by living NPCs and bosses.
     pub fn entity_occupied_tiles(&self) -> HashSet<TilePos> {
+        self.entity_occupied_tiles_excluding(None)
+    }
+
+    pub fn entity_occupied_tiles_excluding(&self, skip_entity: Option<EntityId>) -> HashSet<TilePos> {
         let mut occupied = HashSet::new();
-        for npc in self.npcs.values() {
-            if npc.alive {
-                occupied.insert(npc.position);
+        for (entity_id, npc) in &self.npcs {
+            if !npc.alive || skip_entity == Some(*entity_id) {
+                continue;
+            }
+            let fp = self
+                .content
+                .npc(npc.npc_id)
+                .map(NpcFootprint::from_def)
+                .unwrap_or_default();
+            for tile in fp.occupied_tiles(npc.position) {
+                occupied.insert(tile);
             }
         }
         if let Some(boss) = &self.boss {
-            if boss.hp > 0 {
+            if boss.hp > 0 && skip_entity != Some(boss.entity_id) {
                 occupied.insert(boss.position);
             }
         }

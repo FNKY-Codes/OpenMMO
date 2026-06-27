@@ -125,7 +125,7 @@ pub fn load_player_model(
     surface_format: wgpu::TextureFormat,
     path: &Path,
 ) -> Result<GlbModel> {
-    let model = load_glb_model(device, queue, surface_format, path, TARGET_PLAYER_HEIGHT)?;
+    let model = load_glb_model(device, queue, surface_format, path, 1.0, 1.0, TARGET_PLAYER_HEIGHT)?;
     entity_bounds::set_player_model_dims(model.width, model.height);
     Ok(model)
 }
@@ -136,8 +136,17 @@ pub fn load_npc_model(
     surface_format: wgpu::TextureFormat,
     npc_id: openmmo_common::NpcId,
     path: &Path,
+    footprint: openmmo_common::NpcFootprint,
 ) -> Result<GlbModel> {
-    let model = load_glb_model(device, queue, surface_format, path, TARGET_NPC_HEIGHT)?;
+    let model = load_glb_model(
+        device,
+        queue,
+        surface_format,
+        path,
+        footprint.width as f32,
+        footprint.height as f32,
+        TARGET_NPC_HEIGHT,
+    )?;
     entity_bounds::set_npc_model_dims(npc_id, model.width, model.height);
     Ok(model)
 }
@@ -147,9 +156,11 @@ pub fn load_glb_model(
     queue: &wgpu::Queue,
     surface_format: wgpu::TextureFormat,
     path: &Path,
+    footprint_w: f32,
+    footprint_h: f32,
     target_height: f32,
 ) -> Result<GlbModel> {
-    let mesh = load_mesh_data(path, target_height)?;
+    let mesh = load_mesh_data(path, footprint_w, footprint_h, target_height)?;
     let (width, height) = compute_bounds(&mesh.vertices);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -360,7 +371,7 @@ pub fn player_model_matrix(base: [f32; 3], yaw: f32) -> Mat4 {
     entity_model_matrix(base, yaw)
 }
 
-fn load_mesh_data(path: &Path, target_height: f32) -> Result<MeshData> {
+fn load_mesh_data(path: &Path, footprint_w: f32, footprint_h: f32, target_height: f32) -> Result<MeshData> {
     let (document, buffers, images) = gltf::import(path).context("failed to import glb")?;
 
     let mut vertices = Vec::new();
@@ -385,7 +396,7 @@ fn load_mesh_data(path: &Path, target_height: f32) -> Result<MeshData> {
         material_fallback_texture(&document)
     };
 
-    normalize_mesh(&mut vertices, target_height);
+    normalize_mesh_to_footprint(&mut vertices, footprint_w, footprint_h, target_height);
 
     Ok(MeshData {
         vertices,
@@ -544,20 +555,33 @@ fn compute_bounds(vertices: &[ModelVertex]) -> (f32, f32) {
     (width, height)
 }
 
+fn normalize_mesh_to_footprint(
+    vertices: &mut [ModelVertex],
+    footprint_w: f32,
+    footprint_h: f32,
+    target_height: f32,
+) {
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    for v in vertices.iter() {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(v.position[axis]);
+            max[axis] = max[axis].max(v.position[axis]);
+        }
+    }
+    let width_x = (max[0] - min[0]).max(0.01);
+    let height_y = (max[1] - min[1]).max(0.01);
+    let depth_z = (max[2] - min[2]).max(0.01);
+
+    for v in vertices.iter_mut() {
+        v.position[0] = (v.position[0] - min[0]) / width_x * footprint_w;
+        v.position[1] = (v.position[1] - min[1]) / height_y * target_height;
+        v.position[2] = (v.position[2] - min[2]) / depth_z * footprint_h;
+    }
+}
+
 fn normalize_mesh(vertices: &mut [ModelVertex], target_height: f32) {
-    let (width, height) = compute_bounds(vertices);
-    let scale = target_height / height;
-    let mut min_y = f32::MAX;
-    for v in vertices.iter_mut() {
-        v.position[0] *= scale;
-        v.position[1] *= scale;
-        v.position[2] *= scale;
-        min_y = min_y.min(v.position[1]);
-    }
-    for v in vertices.iter_mut() {
-        v.position[1] -= min_y;
-    }
-    let _ = width * scale;
+    normalize_mesh_to_footprint(vertices, target_height, target_height, target_height);
 }
 
 fn upload_texture(
@@ -660,18 +684,20 @@ mod tests {
     #[test]
     fn tiger_glb_loads_geometry() {
         let path = resolve_model_path(MUTANT_TIGER_MODEL).expect("tiger model should resolve");
-        let mesh = load_mesh_data(&path, TARGET_NPC_HEIGHT).expect("mesh load");
+        let mesh = load_mesh_data(&path, 2.0, 2.0, TARGET_NPC_HEIGHT).expect("mesh load");
         assert!(!mesh.vertices.is_empty());
         assert!(!mesh.indices.is_empty());
         let (width, height) = compute_bounds(&mesh.vertices);
-        assert!((height - TARGET_NPC_HEIGHT).abs() < 0.01);
-        assert!(width > 0.0);
+        assert!((width - 2.0).abs() < 0.05);
+        assert!((height - TARGET_NPC_HEIGHT).abs() < 0.05);
+        let depth = mesh.vertices.iter().map(|v| v.position[2]).fold(0.0f32, f32::max);
+        assert!((depth - 2.0).abs() < 0.05);
     }
 
     #[test]
     fn penguin_glb_loads_geometry() {
         let path = resolve_player_model_path().expect("penguin model should resolve");
-        let mesh = load_mesh_data(&path, TARGET_PLAYER_HEIGHT).expect("mesh load");
+        let mesh = load_mesh_data(&path, 1.0, 1.0, TARGET_PLAYER_HEIGHT).expect("mesh load");
         assert!(!mesh.vertices.is_empty());
         assert!(!mesh.indices.is_empty());
         let (width, height) = compute_bounds(&mesh.vertices);

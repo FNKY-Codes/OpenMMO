@@ -1,4 +1,4 @@
-use openmmo_common::{ContentPack, EntityId, EquipSlot, HarvestTag, ItemId, PlayerAction, PlayerId, Skill, TilePos, ToolTag};
+use openmmo_common::{ContentPack, EntityId, EquipSlot, HarvestTag, ItemId, BossState, NpcState, PlayerAction, PlayerId, Skill, TilePos, ToolTag};
 use openmmo_protocol::{ChatChannel, ClientMessage, LedgerContract, ServerMessage};
 use rand::Rng;
 
@@ -6,8 +6,9 @@ use crate::combat::{
     boss_attack_player, npc_attack_player, player_attack_boss, player_attack_npc, use_gadget,
     XpGrant,
 };
-use crate::pathfinding::{find_attack_path, find_path};
+use crate::pathfinding::{find_attack_path, find_attack_path_to_footprint, find_path};
 use crate::state::GameWorld;
+use openmmo_common::NpcFootprint;
 
 #[derive(Debug, Clone, Copy)]
 pub enum MessageTarget {
@@ -28,10 +29,13 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
     let scavenge_ticks = scavenge_ticks_by_entity(world);
     let player_ids: Vec<PlayerId> = world.players.keys().copied().collect();
     for player_id in player_ids {
-        let mut retry_attack: Option<(EntityId, openmmo_common::CombatStyle, TilePos)> = None;
+        let mut retry_attack: Option<(EntityId, openmmo_common::CombatStyle)> = None;
         let mut retry_scavenge: Option<(EntityId, TilePos)> = None;
         let mut retry_talk: Option<(EntityId, TilePos)> = None;
         let mut pending_talks: Vec<(PlayerId, EntityId)> = Vec::new();
+        let content = &world.content;
+        let npcs = &world.npcs;
+        let boss = &world.boss;
         {
             let player = match world.players.get_mut(&player_id) {
                 Some(p) => p,
@@ -64,8 +68,7 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                             player.ticks_stationary = 1;
                             moved_players.push((player.id, player.position));
                             if let Some(target) = *attack_target {
-                                let target_pos = target_positions.get(&target).copied();
-                                try_begin_combat_from_walk(player, target_pos);
+                                try_begin_combat_from_walk(content, npcs, boss, player, target);
                             } else if let Some(object_entity) = *scavenge_target {
                                 let object_pos = object_positions.get(&object_entity).copied();
                                 let ticks = scavenge_ticks.get(&object_entity).copied();
@@ -84,15 +87,9 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                         }
                     }
                 } else if let (Some(target), Some(style)) = (*attack_target, *attack_style) {
-                    let target_pos = target_positions.get(&target).copied();
-                    try_begin_combat_from_walk(player, target_pos);
+                    try_begin_combat_from_walk(content, npcs, boss, player, target);
                     if !matches!(player.action, PlayerAction::Combat { .. }) {
-                        if let Some(pos) = target_pos {
-                            retry_attack = Some((target, style, pos));
-                        } else {
-                            player.combat_target = None;
-                            player.action = PlayerAction::Idle;
-                        }
+                        retry_attack = Some((target, style));
                     }
                 } else if let Some(object_entity) = *scavenge_target {
                     let object_pos = object_positions.get(&object_entity).copied();
@@ -121,8 +118,8 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                 player.ticks_stationary = player.ticks_stationary.saturating_add(1);
             }
         }
-        if let Some((target, style, target_pos)) = retry_attack {
-            retry_attack_path(world, player_id, target, style, target_pos);
+        if let Some((target, style)) = retry_attack {
+            retry_attack_path(world, player_id, target, style);
         }
         if let Some((object_entity, target_pos)) = retry_scavenge {
             retry_scavenge_path(world, player_id, object_entity, target_pos);
@@ -401,6 +398,55 @@ fn handle_walk(
     None
 }
 
+fn npc_footprint(content: &ContentPack, npc_id: openmmo_common::NpcId) -> NpcFootprint {
+    content
+        .npc(npc_id)
+        .map(NpcFootprint::from_def)
+        .unwrap_or_default()
+}
+
+fn player_in_melee_range(
+    content: &ContentPack,
+    npcs: &std::collections::HashMap<EntityId, NpcState>,
+    boss: &Option<BossState>,
+    player_pos: TilePos,
+    target: EntityId,
+) -> bool {
+    if let Some(npc) = npcs.get(&target) {
+        if !npc.alive {
+            return false;
+        }
+        let fp = npc_footprint(content, npc.npc_id);
+        return fp.player_adjacent(player_pos, npc.position);
+    }
+    if let Some(boss) = boss {
+        if boss.entity_id == target && boss.hp > 0 {
+            return player_pos.chebyshev_distance(&boss.position) <= 1;
+        }
+    }
+    false
+}
+
+fn find_melee_path_to_entity(
+    content: &ContentPack,
+    npcs: &std::collections::HashMap<EntityId, NpcState>,
+    boss: &Option<BossState>,
+    start: TilePos,
+    target: EntityId,
+    walkable: &std::collections::HashSet<TilePos>,
+) -> Vec<TilePos> {
+    if let Some(npc) = npcs.get(&target) {
+        let fp = npc_footprint(content, npc.npc_id);
+        return find_attack_path_to_footprint(start, npc.position, fp, walkable);
+    }
+    if let Some(boss) = boss {
+        if boss.entity_id == target && boss.hp > 0 {
+            return find_attack_path(start, boss.position, walkable);
+        }
+    }
+    Vec::new()
+}
+
 fn entity_positions(world: &GameWorld) -> std::collections::HashMap<EntityId, TilePos> {
     let mut positions = std::collections::HashMap::new();
     for (entity_id, npc) in &world.npcs {
@@ -444,8 +490,11 @@ fn scavenge_ticks_by_entity(world: &GameWorld) -> std::collections::HashMap<Enti
 }
 
 fn try_begin_combat_from_walk(
+    content: &ContentPack,
+    npcs: &std::collections::HashMap<EntityId, NpcState>,
+    boss: &Option<BossState>,
     player: &mut openmmo_common::PlayerState,
-    target_pos: Option<TilePos>,
+    target: EntityId,
 ) {
     let PlayerAction::Walking {
         attack_target,
@@ -455,21 +504,20 @@ fn try_begin_combat_from_walk(
     else {
         return;
     };
-    let (Some(target), Some(style)) = (*attack_target, *attack_style) else {
+    let (Some(walk_target), Some(style)) = (*attack_target, *attack_style) else {
         return;
     };
-    let Some(target_pos) = target_pos else {
-        player.combat_target = None;
-        player.action = PlayerAction::Idle;
+    if walk_target != target {
         return;
-    };
-    if player.position.chebyshev_distance(&target_pos) <= 1 {
-        player.action = PlayerAction::Combat {
-            target,
-            style,
-            player_attack_cooldown: 0,
-        };
     }
+    if !player_in_melee_range(content, npcs, boss, player.position, target) {
+        return;
+    }
+    player.action = PlayerAction::Combat {
+        target,
+        style,
+        player_attack_cooldown: 0,
+    };
 }
 
 fn try_begin_scavenge_from_walk(
@@ -528,14 +576,16 @@ fn retry_attack_path(
     player_id: PlayerId,
     target: EntityId,
     style: openmmo_common::CombatStyle,
-    target_pos: TilePos,
 ) {
     let player_pos = match world.players.get(&player_id) {
         Some(p) => p.position,
         None => return,
     };
     let walkable = world.walkable_for_player(player_id);
-    let path = find_attack_path(player_pos, target_pos, &walkable);
+    let content = &world.content;
+    let npcs = &world.npcs;
+    let boss = &world.boss;
+    let path = find_melee_path_to_entity(content, npcs, boss, player_pos, target, &walkable);
     let Some(player) = world.players.get_mut(&player_id) else {
         return;
     };
@@ -812,24 +862,29 @@ fn handle_attack(
     target: EntityId,
     style: openmmo_common::CombatStyle,
 ) -> Vec<ServerMessage> {
-    let target_pos = match entity_position(world, target) {
-        Some(pos) => pos,
-        None => {
-            return vec![ServerMessage::Error {
-                message: "Invalid attack target".into(),
-            }];
-        }
-    };
+    if entity_position(world, target).is_none() {
+        return vec![ServerMessage::Error {
+            message: "Invalid attack target".into(),
+        }];
+    }
 
     let walkable = world.walkable_for_player(player_id);
-    let player = match world.players.get_mut(&player_id) {
-        Some(p) => p,
-        None => return Vec::new(),
-    };
+    let content = &world.content;
+    let npcs = &world.npcs;
+    let boss = &world.boss;
 
-    player.combat_target = Some(target);
+    {
+        let player = match world.players.get_mut(&player_id) {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
+        player.combat_target = Some(target);
+    }
 
-    if player.position.chebyshev_distance(&target_pos) <= 1 {
+    let player_pos = world.players.get(&player_id).expect("player").position;
+
+    if player_in_melee_range(content, npcs, boss, player_pos, target) {
+        let player = world.players.get_mut(&player_id).expect("player");
         player.action = PlayerAction::Combat {
             target,
             style,
@@ -838,7 +893,11 @@ fn handle_attack(
         return Vec::new();
     }
 
-    let path = find_attack_path(player.position, target_pos, &walkable);
+    let path = find_melee_path_to_entity(content, npcs, boss, player_pos, target, &walkable);
+    let player = match world.players.get_mut(&player_id) {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
     if path.len() > 1 {
         player.action = PlayerAction::Walking {
             path,
@@ -1942,8 +2001,19 @@ fn move_npc_toward(world: &mut GameWorld, entity_id: EntityId, from: TilePos, to
     let dx = (to.x - from.x).clamp(-1, 1);
     let dy = (to.y - from.y).clamp(-1, 1);
     let next = TilePos::new(from.x + dx, from.y + dy);
-    if !world.is_walkable(next) {
+    let Some(npc) = world.npcs.get(&entity_id) else {
         return false;
+    };
+    let fp = world
+        .content
+        .npc(npc.npc_id)
+        .map(NpcFootprint::from_def)
+        .unwrap_or_default();
+    let occupied = world.entity_occupied_tiles_excluding(Some(entity_id));
+    for tile in fp.occupied_tiles(next) {
+        if !world.is_walkable(tile) || occupied.contains(&tile) {
+            return false;
+        }
     }
     if let Some(npc) = world.npcs.get_mut(&entity_id) {
         npc.position = next;
@@ -1974,6 +2044,7 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
         if def.aggro_range == 0 {
             continue;
         }
+        let fp = NpcFootprint::from_def(&def);
         let mut target_player = aggro_target.filter(|pid| world.players.contains_key(pid));
         if target_player.is_none() && aggro_target.is_some() {
             if let Some(npc) = world.npcs.get_mut(&entity_id) {
@@ -1982,7 +2053,7 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
         }
         if target_player.is_none() {
             for (pid, player) in &world.players {
-                if player.position.chebyshev_distance(&npc_pos) <= def.aggro_range {
+                if fp.los_distance(player.position, npc_pos) <= def.aggro_range {
                     target_player = Some(*pid);
                     break;
                 }
@@ -1997,7 +2068,7 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                 .get(&target_pid)
                 .map(|p| p.position)
                 .unwrap_or(npc_pos);
-            if npc_pos.chebyshev_distance(&player_pos) > 1 {
+            if !fp.player_adjacent(player_pos, npc_pos) {
                 move_npc_toward(world, entity_id, npc_pos, player_pos);
             } else {
                 let should_attack = {

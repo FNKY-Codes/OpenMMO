@@ -93,6 +93,7 @@ impl EngineApp {
         let mut renderer = pollster::block_on(Renderer::new(
             window.clone(),
             self.player_model_path.as_deref(),
+            &self.content,
         ));
         let egui_ctx = egui::Context::default();
         setup_theme(&egui_ctx);
@@ -540,6 +541,7 @@ impl EngineApp {
             &self.entities,
             self.region.as_ref(),
             self.local_player,
+            &self.content,
         ) {
             return Some(HoverTarget::Entity(entity_id));
         }
@@ -569,6 +571,7 @@ impl EngineApp {
                     entity.entity_id,
                     now,
                     self.region.as_ref(),
+                    None,
                 ) {
                     renderer.camera_mut().center_on_world(cx, cz);
                 } else if let Some(position) = entity_bounds::entity_tile(entity) {
@@ -593,6 +596,7 @@ impl EngineApp {
             &self.entities,
             self.local_player,
             &self.movement_interp,
+            &self.content,
             self.compute_hover(renderer),
         );
 
@@ -637,6 +641,7 @@ impl EngineApp {
                         &self.entities,
                         &self.movement_interp,
                         self.region.as_ref(),
+                        &self.content,
                         vp,
                         renderer.gpu().config.width,
                         renderer.gpu().config.height,
@@ -792,6 +797,7 @@ impl EngineApp {
                     &self.entities,
                     self.region.as_ref(),
                     self.local_player,
+                    &self.content,
                 );
                 let screen_pos =
                     egui::pos2(self.input.mouse_x / pixels_per_point, self.input.mouse_y / pixels_per_point);
@@ -824,6 +830,7 @@ impl EngineApp {
                 &self.entities,
                 self.region.as_ref(),
                 self.local_player,
+                &self.content,
             ) {
                 if let Some(msg) = self.handle_entity_click(entity_id) {
                     self.close_shop_on_world_interaction();
