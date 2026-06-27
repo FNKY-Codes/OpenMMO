@@ -86,6 +86,31 @@ pub fn hp_bar(ui: &mut Ui, hp: u32, max_hp: u32) {
     ui.add(bar);
 }
 
+/// Compact HP bar for rendering above entities in the world.
+pub fn world_hp_bar(ui: &mut Ui, hp: u32, max_hp: u32) {
+    let ratio = if max_hp > 0 {
+        hp as f32 / max_hp as f32
+    } else {
+        0.0
+    };
+    let bar_width = 52.0;
+    let bar_height = 6.0;
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(bar_width, bar_height), egui::Sense::hover());
+    let fill_width = bar_width * ratio;
+    ui.painter()
+        .rect_filled(rect, 1.0, egui::Color32::from_rgba_unmultiplied(20, 20, 20, 180));
+    if fill_width > 0.0 {
+        let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_width, bar_height));
+        ui.painter().rect_filled(fill_rect, 1.0, theme::hp_color(ratio));
+    }
+    ui.painter().rect_stroke(
+        rect,
+        1.0,
+        egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 40)),
+    );
+}
+
 pub fn status_row(ui: &mut Ui, connected: bool, status: &str) {
     ui.horizontal(|ui| {
         let dot = if connected { theme::ONLINE } else { theme::OFFLINE };

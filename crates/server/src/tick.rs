@@ -1005,6 +1005,14 @@ fn handle_npc_loot(
     }
 }
 
+fn clear_npc_aggro_for_player(world: &mut GameWorld, player_id: PlayerId) {
+    for npc in world.npcs.values_mut() {
+        if npc.aggro_target == Some(player_id) {
+            npc.aggro_target = None;
+        }
+    }
+}
+
 fn respawn_player(
     world: &mut GameWorld,
     player_id: PlayerId,
@@ -1028,6 +1036,7 @@ fn respawn_player(
         player.hp = player.max_hp;
         player.action = PlayerAction::Idle;
         player.combat_target = None;
+        clear_npc_aggro_for_player(world, player_id);
     }
 }
 
@@ -1042,6 +1051,7 @@ fn tick_npc_respawn(world: &mut GameWorld) {
                 if let Some(def) = def {
                     npc.alive = true;
                     npc.hp = def.max_hp;
+                    npc.aggro_target = None;
                 }
             }
         }
@@ -1396,6 +1406,10 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                         style: openmmo_common::CombatStyle::Melee,
                     },
                 ));
+                if player.hp == 0 {
+                    drop(player);
+                    respawn_player(world, target_pid, messages);
+                }
             }
         }
     }

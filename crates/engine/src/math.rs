@@ -267,6 +267,23 @@ pub fn screen_to_world_ray(
     (near, dir)
 }
 
+pub fn world_to_screen(
+    world: Vec3,
+    view_proj: Mat4,
+    width: f32,
+    height: f32,
+) -> Option<(f32, f32)> {
+    let (clip, w) = view_proj.transform_point(world);
+    if w <= 0.0 {
+        return None;
+    }
+    let ndc_x = clip.x / w;
+    let ndc_y = clip.y / w;
+    let screen_x = (ndc_x + 1.0) * 0.5 * width;
+    let screen_y = (1.0 - ndc_y) * 0.5 * height;
+    Some((screen_x, screen_y))
+}
+
 pub fn ray_plane_y_intersection(origin: Vec3, dir: Vec3) -> Option<Vec3> {
     if dir.y.abs() < 1e-6 {
         return None;
