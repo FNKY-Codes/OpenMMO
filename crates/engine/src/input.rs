@@ -7,6 +7,7 @@ pub struct InputState {
     pub mouse_x: f32,
     pub mouse_y: f32,
     pub left_clicked: bool,
+    pub right_clicked: bool,
     pub middle_dragging: bool,
     pub last_drag_x: f32,
     pub last_drag_y: f32,

@@ -1,3 +1,4 @@
+mod context_menu;
 mod side_panel;
 mod theme;
 mod widgets;
@@ -8,6 +9,7 @@ use openmmo_common::{
 };
 use openmmo_protocol::LedgerContract;
 
+pub use context_menu::{build_context_menu, to_client_message, ContextMenu, ContextMenuAction};
 pub use theme::setup_theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +56,7 @@ pub struct GameUi {
     pub ledger_rank: u32,
     pub ledger_points: u32,
     pub ledger_contract: Option<LedgerContract>,
+    pub context_menu: Option<ContextMenu>,
 }
 
 impl Default for GameUi {
@@ -92,6 +95,7 @@ impl Default for GameUi {
             ledger_rank: 0,
             ledger_points: 0,
             ledger_contract: None,
+            context_menu: None,
         }
     }
 }
@@ -275,6 +279,17 @@ impl GameUi {
                 });
         }
 
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.context_menu = None;
+        }
+
+        if let Some(menu) = self.context_menu.clone() {
+            if let Some(menu_action) = context_menu::draw_context_menu(ctx, &menu) {
+                self.context_menu = None;
+                action = UiAction::ContextMenu(menu_action);
+            }
+        }
+
         action
     }
 }
@@ -324,5 +339,6 @@ pub enum UiAction {
     JoinMinigame {
         minigame_id: String,
     },
+    ContextMenu(ContextMenuAction),
     Connect,
 }
