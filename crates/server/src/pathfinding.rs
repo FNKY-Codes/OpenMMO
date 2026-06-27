@@ -2,6 +2,9 @@ use std::collections::{BinaryHeap, HashMap};
 
 use openmmo_common::TilePos;
 
+const CARDINAL_COST: i32 = 10;
+const DIAGONAL_COST: i32 = 14;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct Node {
     pos: TilePos,
@@ -11,7 +14,10 @@ struct Node {
 
 impl Ord for Node {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.f.cmp(&self.f)
+        match other.f.cmp(&self.f) {
+            std::cmp::Ordering::Equal => other.g.cmp(&self.g),
+            ordering => ordering,
+        }
     }
 }
 
@@ -60,12 +66,16 @@ pub fn find_path(
             return reconstruct(&came_from, goal);
         }
 
+        if current.g > *g_score.get(&current.pos).unwrap_or(&i32::MAX) {
+            continue;
+        }
+
         for (dx, dy) in directions {
             let neighbor = TilePos::new(current.pos.x + dx, current.pos.y + dy);
             if !is_step_walkable(current.pos, dx, dy, walkable) {
                 continue;
             }
-            let tentative = current.g + 1;
+            let tentative = current.g + step_cost(dx, dy);
             let entry = g_score.entry(neighbor).or_insert(i32::MAX);
             if tentative < *entry {
                 *entry = tentative;
@@ -79,6 +89,24 @@ pub fn find_path(
         }
     }
     Vec::new()
+}
+
+fn step_cost(dx: i32, dy: i32) -> i32 {
+    if dx != 0 && dy != 0 {
+        DIAGONAL_COST
+    } else {
+        CARDINAL_COST
+    }
+}
+
+fn path_cost(path: &[TilePos]) -> i32 {
+    path.windows(2)
+        .map(|step| {
+            let dx = (step[1].x - step[0].x).abs();
+            let dy = (step[1].y - step[0].y).abs();
+            step_cost(dx, dy)
+        })
+        .sum()
 }
 
 fn is_step_walkable(
@@ -100,7 +128,7 @@ fn is_step_walkable(
 }
 
 fn heuristic(a: TilePos, b: TilePos) -> i32 {
-    a.chebyshev_distance(&b)
+    CARDINAL_COST * a.chebyshev_distance(&b)
 }
 
 const ADJACENT_DIRECTIONS: [(i32, i32); 8] = [
@@ -131,8 +159,12 @@ pub fn find_attack_path(
             continue;
         }
         let path = find_path(start, adj, walkable);
-        if path.len() > 1 && (best_path.is_empty() || path.len() < best_path.len()) {
-            best_path = path;
+        if path.len() > 1 {
+            let cost = path_cost(&path);
+            let best_cost = path_cost(&best_path);
+            if best_path.is_empty() || cost < best_cost {
+                best_path = path;
+            }
         }
     }
     best_path
@@ -195,6 +227,30 @@ mod tests {
         assert!(!path.is_empty());
         assert_eq!(path[0], TilePos::new(0, 0));
         assert_eq!(path.last().unwrap().chebyshev_distance(&target), 1);
+    }
+
+    #[test]
+    fn walks_straight_when_goal_shares_row() {
+        let mut walkable = HashSet::new();
+        for x in 0..20 {
+            for y in 0..20 {
+                walkable.insert(TilePos::new(x, y));
+            }
+        }
+        let path = find_path(TilePos::new(0, 5), TilePos::new(10, 5), &walkable);
+        assert!(path.iter().all(|tile| tile.y == 5));
+    }
+
+    #[test]
+    fn walks_straight_when_goal_shares_column() {
+        let mut walkable = HashSet::new();
+        for x in 0..20 {
+            for y in 0..20 {
+                walkable.insert(TilePos::new(x, y));
+            }
+        }
+        let path = find_path(TilePos::new(3, 0), TilePos::new(3, 10), &walkable);
+        assert!(path.iter().all(|tile| tile.x == 3));
     }
 
     #[test]
