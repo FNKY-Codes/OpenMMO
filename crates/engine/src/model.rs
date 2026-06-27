@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -50,6 +50,63 @@ struct MeshData {
     vertices: Vec<ModelVertex>,
     indices: Vec<u32>,
     texture: image::DynamicImage,
+}
+
+const DEFAULT_PLAYER_MODEL: &str = "Pinguin_001.glb";
+
+/// Resolve the player GLB path from env, workspace layout, cwd, or executable location.
+pub fn resolve_player_model_path() -> Option<PathBuf> {
+    if let Ok(env) = std::env::var("OPENMMO_PLAYER_MODEL") {
+        let path = PathBuf::from(&env);
+        if path.is_file() {
+            return Some(path);
+        }
+        eprintln!("OpenMMO: OPENMMO_PLAYER_MODEL points to missing file: {env}");
+    }
+
+    for candidate in player_model_candidates() {
+        if candidate.is_file() {
+            return candidate.canonicalize().ok().or(Some(candidate));
+        }
+    }
+
+    eprintln!(
+        "OpenMMO: player model not found (tried {} locations); using cube fallback. \
+         Place assets/models/{DEFAULT_PLAYER_MODEL} in the project root or set OPENMMO_PLAYER_MODEL.",
+        player_model_candidates().len()
+    );
+    None
+}
+
+fn player_model_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/models")
+            .join(DEFAULT_PLAYER_MODEL),
+    );
+
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("assets/models").join(DEFAULT_PLAYER_MODEL));
+        let mut dir = Some(cwd.as_path());
+        while let Some(d) = dir {
+            candidates.push(d.join("assets/models").join(DEFAULT_PLAYER_MODEL));
+            dir = d.parent();
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("assets/models").join(DEFAULT_PLAYER_MODEL));
+            candidates.push(
+                dir.join("../../assets/models")
+                    .join(DEFAULT_PLAYER_MODEL),
+            );
+        }
+    }
+
+    candidates
 }
 
 pub fn load_player_model(
@@ -252,11 +309,6 @@ fn load_mesh_data(path: &Path) -> Result<MeshData> {
 
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
-    let mut texture = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
-        1,
-        1,
-        image::Rgba([255, 255, 255, 255]),
-    ));
 
     for scene in document.scenes() {
         for node in scene.nodes() {
@@ -268,20 +320,14 @@ fn load_mesh_data(path: &Path) -> Result<MeshData> {
         anyhow::bail!("glb contains no mesh geometry");
     }
 
-    if let Some(image) = images.into_iter().next() {
-        texture = image::load_from_memory(&image.pixels).context("failed to decode texture")?;
-    } else if let Some(mat) = document.materials().next() {
-        let factor = mat.pbr_metallic_roughness().base_color_factor();
-        let r = (factor[0] * 255.0) as u8;
-        let g = (factor[1] * 255.0) as u8;
-        let b = (factor[2] * 255.0) as u8;
-        let a = (factor[3] * 255.0) as u8;
-        texture = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
-            1,
-            1,
-            image::Rgba([r, g, b, a]),
-        ));
-    }
+    let texture = if let Some(image) = images.into_iter().next() {
+        gltf_image_to_dynamic(&image).unwrap_or_else(|err| {
+            tracing::warn!(%err, "failed to convert player model texture; using material color");
+            material_fallback_texture(&document)
+        })
+    } else {
+        material_fallback_texture(&document)
+    };
 
     normalize_mesh(&mut vertices, TARGET_PLAYER_HEIGHT);
 
@@ -290,6 +336,58 @@ fn load_mesh_data(path: &Path) -> Result<MeshData> {
         indices,
         texture,
     })
+}
+
+fn gltf_image_to_dynamic(image: &gltf::image::Data) -> Result<image::DynamicImage> {
+    use gltf::image::Format;
+
+    let width = image.width.max(1);
+    let height = image.height.max(1);
+    match image.format {
+        Format::R8G8B8A8 => {
+            if image.pixels.len() != (width * height * 4) as usize {
+                anyhow::bail!(
+                    "unexpected R8G8B8A8 size: got {} expected {}",
+                    image.pixels.len(),
+                    width * height * 4
+                );
+            }
+            let rgba = image::RgbaImage::from_raw(width, height, image.pixels.clone())
+                .context("failed to build RGBA image")?;
+            Ok(image::DynamicImage::ImageRgba8(rgba))
+        }
+        Format::R8G8B8 => {
+            let mut rgba = image::RgbaImage::new(width, height);
+            for (i, chunk) in image.pixels.chunks_exact(3).enumerate() {
+                let x = (i as u32) % width;
+                let y = (i as u32) / width;
+                rgba.put_pixel(
+                    x,
+                    y,
+                    image::Rgba([chunk[0], chunk[1], chunk[2], 255]),
+                );
+            }
+            Ok(image::DynamicImage::ImageRgba8(rgba))
+        }
+        other => anyhow::bail!("unsupported gltf image format: {other:?}"),
+    }
+}
+
+fn material_fallback_texture(document: &gltf::Document) -> image::DynamicImage {
+    let factor = document
+        .materials()
+        .next()
+        .map(|mat| mat.pbr_metallic_roughness().base_color_factor())
+        .unwrap_or([0.8, 0.8, 0.85, 1.0]);
+    let r = (factor[0] * 255.0) as u8;
+    let g = (factor[1] * 255.0) as u8;
+    let b = (factor[2] * 255.0) as u8;
+    let a = (factor[3] * 255.0) as u8;
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        1,
+        1,
+        image::Rgba([r, g, b, a]),
+    ))
 }
 
 fn append_node(
@@ -469,12 +567,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn penguin_glb_loads_geometry() {
-        let path = Path::new("assets/models/Pinguin_001.glb");
-        if !path.exists() {
-            return;
+    fn compile_time_asset_path_exists() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/models")
+            .join(DEFAULT_PLAYER_MODEL);
+        assert!(path.is_file(), "missing penguin model at {path:?}");
+    }
+
+    #[test]
+    fn resolve_player_model_path_finds_penguin() {
+        let path = resolve_player_model_path().expect("penguin model should resolve");
+        assert!(path.is_file(), "resolved path missing: {path:?}");
+    }
+
+    #[test]
+    fn penguin_glb_reports_image_format() {
+        let path = resolve_player_model_path().expect("penguin model should resolve");
+        let (_doc, _bufs, images) = gltf::import(&path).expect("import");
+        for (i, image) in images.iter().enumerate() {
+            eprintln!(
+                "image {i}: {}x{} format={:?} bytes={}",
+                image.width,
+                image.height,
+                image.format,
+                image.pixels.len()
+            );
         }
-        let mesh = load_mesh_data(path).expect("mesh load");
+    }
+
+    #[test]
+    fn penguin_glb_loads_geometry() {
+        let path = resolve_player_model_path().expect("penguin model should resolve");
+        let mesh = load_mesh_data(&path).expect("mesh load");
         assert!(!mesh.vertices.is_empty());
         assert!(!mesh.indices.is_empty());
         let (width, height) = compute_bounds(&mesh.vertices);
