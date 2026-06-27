@@ -286,13 +286,6 @@ fn handle_walk(
             message: "Invalid movement".into(),
         });
     }
-    if crate::anticheat::detect_speed_hack(player.last_position, target, player.ticks_stationary) {
-        world.audit(&format!("Speed hack detected for {player_id:?}"));
-        world.remove_player(player_id);
-        return Some(ServerMessage::Error {
-            message: "Movement rejected".into(),
-        });
-    }
     let path = find_path(player.position, target, &walkable);
     if path.len() > 1 {
         player.action = PlayerAction::Walking { path, index: 0 };
@@ -1492,5 +1485,63 @@ mod routing_tests {
             matches!(target, MessageTarget::Player(p) if *p == pid)
                 && matches!(msg, ServerMessage::InventoryUpdate { .. })
         }));
+    }
+
+    #[test]
+    fn walk_intent_to_distant_tile_does_not_remove_player() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content);
+        let pid = PlayerId(Uuid::from_u128(1));
+        let mut player = test_player(1);
+        player.position = TilePos::new(5, 5);
+        player.last_position = TilePos::new(5, 5);
+        player.ticks_stationary = 1;
+        world.players.insert(pid, player);
+
+        let msgs = handle_client_message(
+            &mut world,
+            pid,
+            ClientMessage::WalkIntent {
+                target: TilePos::new(10, 10),
+            },
+        );
+
+        assert!(world.players.contains_key(&pid));
+        assert!(!msgs.iter().any(|(_, msg)| matches!(
+            msg,
+            ServerMessage::Error { message } if message == "Movement rejected"
+        )));
+        assert!(matches!(
+            world.players.get(&pid).unwrap().action,
+            openmmo_common::PlayerAction::Walking { .. }
+        ));
+    }
+
+    #[test]
+    fn walk_intent_avoids_npc_tile_but_reaches_adjacent_tile() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content);
+        let pid = PlayerId(Uuid::from_u128(1));
+        let mut player = test_player(1);
+        player.position = TilePos::new(5, 5);
+        world.players.insert(pid, player);
+
+        let msgs = handle_client_message(
+            &mut world,
+            pid,
+            ClientMessage::WalkIntent {
+                target: TilePos::new(7, 5),
+            },
+        );
+
+        assert!(msgs.is_empty());
+        let action = &world.players.get(&pid).unwrap().action;
+        let openmmo_common::PlayerAction::Walking { path, .. } = action else {
+            panic!("expected walking action");
+        };
+        assert!(!path.contains(&TilePos::new(6, 5)));
+        assert_eq!(*path.last().unwrap(), TilePos::new(7, 5));
     }
 }

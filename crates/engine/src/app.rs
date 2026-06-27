@@ -623,6 +623,9 @@ impl EngineApp {
             self.input.left_clicked = false;
             let width = renderer.gpu().config.width;
             let height = renderer.gpu().config.height;
+            let tile = self
+                .input
+                .tile_under_cursor(renderer.camera(), width, height);
             if let Some(entity_id) = self.input.entity_under_cursor(
                 renderer.camera(),
                 width,
@@ -631,12 +634,15 @@ impl EngineApp {
             ) {
                 if let Some(msg) = self.handle_entity_click(entity_id) {
                     self.send(msg);
+                } else if let Some(target) = tile {
+                    if self.local_player_position() != Some(target) {
+                        self.send(ClientMessage::WalkIntent { target });
+                    }
                 }
-            } else if let Some(tile) =
-                self.input
-                    .tile_under_cursor(renderer.camera(), width, height)
-            {
-                self.send(ClientMessage::WalkIntent { target: tile });
+            } else if let Some(target) = tile {
+                if self.local_player_position() != Some(target) {
+                    self.send(ClientMessage::WalkIntent { target });
+                }
             }
         }
 
