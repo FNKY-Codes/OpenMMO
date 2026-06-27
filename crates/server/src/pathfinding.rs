@@ -44,7 +44,16 @@ pub fn find_path(
         f: heuristic(start, goal),
     });
 
-    let directions = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+    let directions = [
+        (1, 0),
+        (-1, 0),
+        (0, 1),
+        (0, -1),
+        (1, 1),
+        (1, -1),
+        (-1, 1),
+        (-1, -1),
+    ];
 
     while let Some(current) = open.pop() {
         if current.pos == goal {
@@ -53,7 +62,7 @@ pub fn find_path(
 
         for (dx, dy) in directions {
             let neighbor = TilePos::new(current.pos.x + dx, current.pos.y + dy);
-            if !walkable.contains(&neighbor) {
+            if !is_step_walkable(current.pos, dx, dy, walkable) {
                 continue;
             }
             let tentative = current.g + 1;
@@ -72,8 +81,26 @@ pub fn find_path(
     Vec::new()
 }
 
+fn is_step_walkable(
+    from: TilePos,
+    dx: i32,
+    dy: i32,
+    walkable: &std::collections::HashSet<TilePos>,
+) -> bool {
+    let to = TilePos::new(from.x + dx, from.y + dy);
+    if !walkable.contains(&to) {
+        return false;
+    }
+    if dx != 0 && dy != 0 {
+        walkable.contains(&TilePos::new(from.x + dx, from.y))
+            && walkable.contains(&TilePos::new(from.x, from.y + dy))
+    } else {
+        true
+    }
+}
+
 fn heuristic(a: TilePos, b: TilePos) -> i32 {
-    a.manhattan_distance(&b)
+    a.chebyshev_distance(&b)
 }
 
 fn reconstruct(came_from: &HashMap<TilePos, TilePos>, mut current: TilePos) -> Vec<TilePos> {
@@ -103,5 +130,33 @@ mod tests {
         assert!(!path.is_empty());
         assert_eq!(path[0], TilePos::new(0, 0));
         assert_eq!(*path.last().unwrap(), TilePos::new(3, 3));
+    }
+
+    #[test]
+    fn prefers_diagonal_path_when_open() {
+        let mut walkable = HashSet::new();
+        for x in 0..10 {
+            for y in 0..10 {
+                walkable.insert(TilePos::new(x, y));
+            }
+        }
+        let path = find_path(TilePos::new(0, 0), TilePos::new(3, 3), &walkable);
+        assert_eq!(path.len(), 4);
+        assert_eq!(path[1], TilePos::new(1, 1));
+        assert_eq!(path[2], TilePos::new(2, 2));
+    }
+
+    #[test]
+    fn blocks_corner_cutting() {
+        let mut walkable = HashSet::new();
+        for x in 0..5 {
+            for y in 0..5 {
+                walkable.insert(TilePos::new(x, y));
+            }
+        }
+        walkable.remove(&TilePos::new(1, 0));
+        walkable.remove(&TilePos::new(0, 1));
+        let path = find_path(TilePos::new(0, 0), TilePos::new(1, 1), &walkable);
+        assert!(path.is_empty());
     }
 }
