@@ -103,6 +103,41 @@ fn heuristic(a: TilePos, b: TilePos) -> i32 {
     a.chebyshev_distance(&b)
 }
 
+const ADJACENT_DIRECTIONS: [(i32, i32); 8] = [
+    (1, 0),
+    (-1, 0),
+    (0, 1),
+    (0, -1),
+    (1, 1),
+    (1, -1),
+    (-1, 1),
+    (-1, -1),
+];
+
+/// Shortest path from `start` to a walkable tile adjacent to `target`.
+pub fn find_attack_path(
+    start: TilePos,
+    target: TilePos,
+    walkable: &std::collections::HashSet<TilePos>,
+) -> Vec<TilePos> {
+    if start.chebyshev_distance(&target) <= 1 {
+        return vec![start];
+    }
+
+    let mut best_path = Vec::new();
+    for (dx, dy) in ADJACENT_DIRECTIONS {
+        let adj = TilePos::new(target.x + dx, target.y + dy);
+        if !walkable.contains(&adj) {
+            continue;
+        }
+        let path = find_path(start, adj, walkable);
+        if path.len() > 1 && (best_path.is_empty() || path.len() < best_path.len()) {
+            best_path = path;
+        }
+    }
+    best_path
+}
+
 fn reconstruct(came_from: &HashMap<TilePos, TilePos>, mut current: TilePos) -> Vec<TilePos> {
     let mut path = vec![current];
     while let Some(&prev) = came_from.get(&current) {
@@ -144,6 +179,22 @@ mod tests {
         assert_eq!(path.len(), 4);
         assert_eq!(path[1], TilePos::new(1, 1));
         assert_eq!(path[2], TilePos::new(2, 2));
+    }
+
+    #[test]
+    fn finds_path_to_adjacent_tile() {
+        let mut walkable = HashSet::new();
+        for x in 0..10 {
+            for y in 0..10 {
+                walkable.insert(TilePos::new(x, y));
+            }
+        }
+        let target = TilePos::new(5, 5);
+        walkable.remove(&target);
+        let path = find_attack_path(TilePos::new(0, 0), target, &walkable);
+        assert!(!path.is_empty());
+        assert_eq!(path[0], TilePos::new(0, 0));
+        assert_eq!(path.last().unwrap().chebyshev_distance(&target), 1);
     }
 
     #[test]

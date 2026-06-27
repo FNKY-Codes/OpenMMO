@@ -56,6 +56,10 @@ pub enum PlayerAction {
     Walking {
         path: Vec<TilePos>,
         index: usize,
+        #[serde(default)]
+        attack_target: Option<EntityId>,
+        #[serde(default)]
+        attack_style: Option<crate::CombatStyle>,
     },
     Scavenging {
         object_entity: EntityId,

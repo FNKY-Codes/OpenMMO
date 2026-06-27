@@ -3,7 +3,7 @@ use openmmo_protocol::{ChatChannel, ClientMessage, LedgerContract, ServerMessage
 use rand::Rng;
 
 use crate::combat::{cast_spell, npc_attack_player, player_attack_npc};
-use crate::pathfinding::find_path;
+use crate::pathfinding::{find_attack_path, find_path};
 use crate::state::GameWorld;
 
 #[derive(Debug, Clone, Copy)]
@@ -20,24 +20,60 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
 
     let mut moved_players = Vec::new();
     let occupied = world.entity_occupied_tiles();
-    for player in world.players.values_mut() {
-        if let PlayerAction::Walking { path, index } = &mut player.action {
-            if *index + 1 < path.len() {
-                let next_pos = path[*index + 1];
-                if occupied.contains(&next_pos) && next_pos != player.position {
-                    player.action = PlayerAction::Idle;
+    let target_positions = entity_positions(world);
+    let player_ids: Vec<PlayerId> = world.players.keys().copied().collect();
+    for player_id in player_ids {
+        let mut retry_attack: Option<(EntityId, openmmo_common::CombatStyle, TilePos)> = None;
+        {
+            let player = match world.players.get_mut(&player_id) {
+                Some(p) => p,
+                None => continue,
+            };
+            if let PlayerAction::Walking {
+                path,
+                index,
+                attack_target,
+                attack_style,
+            } = &mut player.action
+            {
+                if *index + 1 < path.len() {
+                    let next_pos = path[*index + 1];
+                    if occupied.contains(&next_pos) && next_pos != player.position {
+                        if attack_target.is_some() {
+                            player.combat_target = None;
+                        }
+                        player.action = PlayerAction::Idle;
+                    } else {
+                        *index += 1;
+                        player.position = path[*index];
+                        player.last_position = player.position;
+                        player.ticks_stationary = 1;
+                        moved_players.push((player.id, player.position));
+                        if let Some(target) = *attack_target {
+                            let target_pos = target_positions.get(&target).copied();
+                            try_begin_combat_from_walk(player, target_pos);
+                        }
+                    }
+                } else if let (Some(target), Some(style)) = (*attack_target, *attack_style) {
+                    let target_pos = target_positions.get(&target).copied();
+                    try_begin_combat_from_walk(player, target_pos);
+                    if !matches!(player.action, PlayerAction::Combat { .. }) {
+                        if let Some(pos) = target_pos {
+                            retry_attack = Some((target, style, pos));
+                        } else {
+                            player.combat_target = None;
+                            player.action = PlayerAction::Idle;
+                        }
+                    }
                 } else {
-                    *index += 1;
-                    player.position = path[*index];
-                    player.last_position = player.position;
-                    player.ticks_stationary = 1;
-                    moved_players.push((player.id, player.position));
+                    player.action = PlayerAction::Idle;
                 }
             } else {
-                player.action = PlayerAction::Idle;
+                player.ticks_stationary = player.ticks_stationary.saturating_add(1);
             }
-        } else {
-            player.ticks_stationary = player.ticks_stationary.saturating_add(1);
+        }
+        if let Some((target, style, target_pos)) = retry_attack {
+            retry_attack_path(world, player_id, target, style, target_pos);
         }
     }
     for (pid, pos) in moved_players {
@@ -288,10 +324,88 @@ fn handle_walk(
     }
     let path = find_path(player.position, target, &walkable);
     if path.len() > 1 {
-        player.action = PlayerAction::Walking { path, index: 0 };
+        player.combat_target = None;
+        player.action = PlayerAction::Walking {
+            path,
+            index: 0,
+            attack_target: None,
+            attack_style: None,
+        };
         player.ticks_stationary = 0;
     }
     None
+}
+
+fn entity_positions(world: &GameWorld) -> std::collections::HashMap<EntityId, TilePos> {
+    let mut positions = std::collections::HashMap::new();
+    for (entity_id, npc) in &world.npcs {
+        if npc.alive {
+            positions.insert(*entity_id, npc.position);
+        }
+    }
+    if let Some(boss) = &world.boss {
+        if boss.hp > 0 {
+            positions.insert(boss.entity_id, boss.position);
+        }
+    }
+    positions
+}
+
+fn entity_position(world: &GameWorld, entity_id: EntityId) -> Option<TilePos> {
+    entity_positions(world).get(&entity_id).copied()
+}
+
+fn try_begin_combat_from_walk(
+    player: &mut openmmo_common::PlayerState,
+    target_pos: Option<TilePos>,
+) {
+    let PlayerAction::Walking {
+        attack_target,
+        attack_style,
+        ..
+    } = &player.action
+    else {
+        return;
+    };
+    let (Some(target), Some(style)) = (*attack_target, *attack_style) else {
+        return;
+    };
+    let Some(target_pos) = target_pos else {
+        player.combat_target = None;
+        player.action = PlayerAction::Idle;
+        return;
+    };
+    if player.position.chebyshev_distance(&target_pos) <= 1 {
+        player.action = PlayerAction::Combat { target, style };
+    }
+}
+
+fn retry_attack_path(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    target: EntityId,
+    style: openmmo_common::CombatStyle,
+    target_pos: TilePos,
+) {
+    let player_pos = match world.players.get(&player_id) {
+        Some(p) => p.position,
+        None => return,
+    };
+    let walkable = world.walkable_for_player(player_id);
+    let path = find_attack_path(player_pos, target_pos, &walkable);
+    let Some(player) = world.players.get_mut(&player_id) else {
+        return;
+    };
+    if path.len() > 1 {
+        player.action = PlayerAction::Walking {
+            path,
+            index: 0,
+            attack_target: Some(target),
+            attack_style: Some(style),
+        };
+    } else {
+        player.action = PlayerAction::Combat { target, style };
+    }
 }
 
 fn handle_scavenge(
@@ -392,12 +506,40 @@ fn handle_attack(
     target: EntityId,
     style: openmmo_common::CombatStyle,
 ) -> Vec<ServerMessage> {
+    let target_pos = match entity_position(world, target) {
+        Some(pos) => pos,
+        None => {
+            return vec![ServerMessage::Error {
+                message: "Invalid attack target".into(),
+            }];
+        }
+    };
+
+    let walkable = world.walkable_for_player(player_id);
     let player = match world.players.get_mut(&player_id) {
         Some(p) => p,
         None => return Vec::new(),
     };
+
     player.combat_target = Some(target);
-    player.action = PlayerAction::Combat { target, style };
+
+    if player.position.chebyshev_distance(&target_pos) <= 1 {
+        player.action = PlayerAction::Combat { target, style };
+        return Vec::new();
+    }
+
+    let path = find_attack_path(player.position, target_pos, &walkable);
+    if path.len() > 1 {
+        player.action = PlayerAction::Walking {
+            path,
+            index: 0,
+            attack_target: Some(target),
+            attack_style: Some(style),
+        };
+        player.ticks_stationary = 0;
+    } else {
+        player.action = PlayerAction::Combat { target, style };
+    }
     Vec::new()
 }
 
@@ -1583,6 +1725,74 @@ mod routing_tests {
         };
         assert!(!path.contains(&TilePos::new(6, 5)));
         assert_eq!(*path.last().unwrap(), TilePos::new(7, 5));
+    }
+
+    #[test]
+    fn attack_out_of_range_walks_to_enemy_then_combats() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content);
+
+        let (entity_id, npc_pos) = world
+            .npcs
+            .iter()
+            .find_map(|(eid, n)| {
+                world
+                    .content
+                    .npc(n.npc_id)
+                    .filter(|d| d.aggro_range > 0)
+                    .map(|_| (*eid, n.position))
+            })
+            .expect("hostile npc");
+
+        let pid = PlayerId(Uuid::from_u128(1));
+        let mut player = test_player(1);
+        player.position = TilePos::new(npc_pos.x + 10, npc_pos.y + 10);
+        player.last_position = player.position;
+        world.players.insert(pid, player);
+
+        let msgs = handle_client_message(
+            &mut world,
+            pid,
+            ClientMessage::Attack {
+                target: entity_id,
+                style: openmmo_common::CombatStyle::Melee,
+            },
+        );
+        assert!(msgs.is_empty());
+
+        let action = &world.players.get(&pid).unwrap().action;
+        let openmmo_common::PlayerAction::Walking {
+            attack_target,
+            attack_style,
+            ..
+        } = action
+        else {
+            panic!("expected walking toward attack target, got {action:?}");
+        };
+        assert_eq!(*attack_target, Some(entity_id));
+        assert_eq!(*attack_style, Some(openmmo_common::CombatStyle::Melee));
+
+        let mut reached_combat = false;
+        for _ in 0..50 {
+            process_tick(&mut world);
+            if matches!(
+                world.players.get(&pid).unwrap().action,
+                openmmo_common::PlayerAction::Combat { .. }
+            ) {
+                let player = world.players.get(&pid).unwrap();
+                let dist = player
+                    .position
+                    .chebyshev_distance(&world.npcs.get(&entity_id).unwrap().position);
+                assert!(dist <= 1);
+                reached_combat = true;
+                break;
+            }
+        }
+        assert!(
+            reached_combat,
+            "player should reach attack range and enter combat"
+        );
     }
 
     #[test]
