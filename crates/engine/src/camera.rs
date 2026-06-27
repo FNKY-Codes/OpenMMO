@@ -1,5 +1,6 @@
 use openmmo_common::TilePos;
 
+use crate::entity_bounds;
 use crate::math::{self, Mat4, Vec3, DEFAULT_FOV_Y};
 
 #[derive(Debug, Clone)]
@@ -107,6 +108,7 @@ impl Camera {
         width: u32,
         height: u32,
         entities: &[openmmo_common::WorldEntity],
+        region: Option<&openmmo_common::RegionDef>,
     ) -> Option<openmmo_common::EntityId> {
         let inv_vp = self.inverse_view_projection(width, height);
         let (origin, dir) = math::screen_to_world_ray(
@@ -116,34 +118,85 @@ impl Camera {
             height.max(1) as f32,
             inv_vp,
         );
-        let hit = math::ray_plane_y_intersection(origin, dir)?;
-        let hit_tile = TilePos::new(hit.x.floor() as i32, hit.z.floor() as i32);
         let mut best: Option<(openmmo_common::EntityId, f32)> = None;
         for entity in entities {
-            let pos = entity_tile(entity)?;
-            if pos != hit_tile {
-                continue;
-            }
-            let cx = pos.x as f32 + 0.5;
-            let cz = pos.y as f32 + 0.5;
-            let dx = hit.x - cx;
-            let dz = hit.z - cz;
-            let dist = (dx * dx + dz * dz).sqrt();
-            if best.is_none() || dist < best.unwrap().1 {
-                best = Some((entity.entity_id, dist));
+            let (center, half) = entity_bounds::entity_aabb(entity, region)?;
+            let t = math::ray_aabb_intersection(origin, dir, center, half)?;
+            if best.is_none() || t < best.unwrap().1 {
+                best = Some((entity.entity_id, t));
             }
         }
         best.map(|(id, _)| id)
     }
 }
 
-fn entity_tile(entity: &openmmo_common::WorldEntity) -> Option<TilePos> {
-    use openmmo_common::EntityKind;
-    match &entity.kind {
-        EntityKind::Player { position, .. }
-        | EntityKind::Npc { position, .. }
-        | EntityKind::Boss { position, .. }
-        | EntityKind::Object { position, .. }
-        | EntityKind::GroundItem { position, .. } => Some(*position),
+#[cfg(test)]
+mod tests {
+    use openmmo_common::{EntityId, EntityKind, TilePos, WorldEntity};
+
+    use super::Camera;
+
+    fn object_at(tile: TilePos) -> WorldEntity {
+        WorldEntity {
+            entity_id: EntityId(1),
+            kind: EntityKind::Object {
+                object_id: openmmo_common::ObjectId(1),
+                position: tile,
+            },
+        }
+    }
+
+    #[test]
+    fn pick_entity_hits_object_mesh_not_just_ground_tile() {
+        let camera = Camera {
+            target_x: 5.5,
+            target_y: 0.9,
+            target_z: 5.5,
+            yaw: 0.7,
+            pitch: 0.55,
+            distance: 12.0,
+        };
+        let object_tile = TilePos::new(5, 5);
+        let entities = vec![object_at(object_tile)];
+        let width = 800;
+        let height = 600;
+        let (center, half) = crate::entity_bounds::entity_aabb(&entities[0], None).unwrap();
+
+        let mut found = false;
+        'search: for y in (0..height).step_by(8) {
+            for x in (0..width).step_by(8) {
+                let inv_vp = camera.inverse_view_projection(width, height);
+                let (origin, dir) = crate::math::screen_to_world_ray(
+                    x as f32,
+                    y as f32,
+                    width as f32,
+                    height as f32,
+                    inv_vp,
+                );
+                let Some(t) = crate::math::ray_aabb_intersection(origin, dir, center, half) else {
+                    continue;
+                };
+                if t <= 0.0 {
+                    continue;
+                }
+                let ground_hit = crate::math::ray_plane_y_intersection(origin, dir).expect("ground hit");
+                let ground_tile =
+                    TilePos::new(ground_hit.x.floor() as i32, ground_hit.z.floor() as i32);
+                if ground_tile == object_tile {
+                    continue;
+                }
+
+                let picked = camera
+                    .pick_entity(x as f32, y as f32, width, height, &entities, None)
+                    .expect("object should be picked from its mesh");
+                assert_eq!(picked, EntityId(1));
+                found = true;
+                break 'search;
+            }
+        }
+        assert!(
+            found,
+            "expected a screen point that hits the object mesh but projects to a different ground tile"
+        );
     }
 }

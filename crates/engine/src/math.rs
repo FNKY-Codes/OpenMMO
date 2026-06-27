@@ -278,6 +278,47 @@ pub fn ray_plane_y_intersection(origin: Vec3, dir: Vec3) -> Option<Vec3> {
     Some(origin.add(dir.scale(t)))
 }
 
+/// Returns the distance along `dir` to the nearest intersection with an axis-aligned box.
+pub fn ray_aabb_intersection(origin: Vec3, dir: Vec3, center: Vec3, half: Vec3) -> Option<f32> {
+    let min = center.sub(half);
+    let max = center.add(half);
+
+    let mut t_min = 0.0f32;
+    let mut t_max = f32::MAX;
+
+    let axes = [
+        (origin.x, dir.x, min.x, max.x),
+        (origin.y, dir.y, min.y, max.y),
+        (origin.z, dir.z, min.z, max.z),
+    ];
+
+    for (o, d, mn, mx) in axes {
+        if d.abs() < 1e-8 {
+            if o < mn || o > mx {
+                return None;
+            }
+        } else {
+            let inv_d = 1.0 / d;
+            let mut t1 = (mn - o) * inv_d;
+            let mut t2 = (mx - o) * inv_d;
+            if t1 > t2 {
+                std::mem::swap(&mut t1, &mut t2);
+            }
+            t_min = t_min.max(t1);
+            t_max = t_max.min(t2);
+            if t_min > t_max {
+                return None;
+            }
+        }
+    }
+
+    if t_max < 0.0 {
+        return None;
+    }
+
+    Some(if t_min >= 0.0 { t_min } else { t_max })
+}
+
 pub const DEFAULT_FOV_Y: f32 = PI / 4.0;
 
 #[cfg(test)]
@@ -299,5 +340,24 @@ mod tests {
             ndc_y > 0.0,
             "world +Y should project to upper NDC, got {ndc_y}"
         );
+    }
+
+    #[test]
+    fn ray_aabb_hits_centered_box() {
+        let origin = Vec3::new(0.0, 0.0, -5.0);
+        let dir = Vec3::new(0.0, 0.0, 1.0);
+        let center = Vec3::new(0.0, 1.0, 0.0);
+        let half = Vec3::new(0.5, 1.0, 0.5);
+        let t = ray_aabb_intersection(origin, dir, center, half).expect("hit");
+        assert!((t - 4.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn ray_aabb_misses_offset_box() {
+        let origin = Vec3::new(0.0, 0.0, -5.0);
+        let dir = Vec3::new(0.0, 0.0, 1.0);
+        let center = Vec3::new(5.0, 1.0, 0.0);
+        let half = Vec3::new(0.5, 1.0, 0.5);
+        assert!(ray_aabb_intersection(origin, dir, center, half).is_none());
     }
 }

@@ -21,8 +21,16 @@ impl InputState {
         width: u32,
         height: u32,
         entities: &[openmmo_common::WorldEntity],
+        region: Option<&openmmo_common::RegionDef>,
     ) -> Option<openmmo_common::EntityId> {
-        camera.pick_entity(self.mouse_x, self.mouse_y, width, height, entities)
+        camera.pick_entity(
+            self.mouse_x,
+            self.mouse_y,
+            width,
+            height,
+            entities,
+            region,
+        )
     }
 
     pub fn tile_under_cursor(&self, camera: &Camera, width: u32, height: u32) -> Option<TilePos> {
