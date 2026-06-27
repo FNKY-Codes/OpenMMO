@@ -391,8 +391,8 @@ impl Renderer {
         let edge_count = edge_vertices.len() as u32;
         let vertices: Vec<Vertex> = tile_vertices
             .iter()
-            .chain(edge_vertices.iter())
             .chain(entity_vertices.iter())
+            .chain(edge_vertices.iter())
             .copied()
             .collect();
 
@@ -436,19 +436,19 @@ impl Renderer {
             render_pass.draw(0..tile_count, 0..1);
         }
 
-        if edge_count > 0 {
-            render_pass.set_pipeline(&self.outline_pipeline);
-            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(tile_count..tile_count + edge_count, 0..1);
-        }
-
         if entity_count > 0 {
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.draw(tile_count..tile_count + entity_count, 0..1);
+        }
+
+        if edge_count > 0 {
+            render_pass.set_pipeline(&self.outline_pipeline);
+            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.draw(
-                tile_count + edge_count..tile_count + edge_count + entity_count,
+                tile_count + entity_count..tile_count + entity_count + edge_count,
                 0..1,
             );
         }
@@ -767,15 +767,27 @@ fn push_thick_edge(
     let mut min = [a[0].min(b[0]), a[1].min(b[1]), a[2].min(b[2])];
     let mut max = [a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2])];
 
-    if (a[0] - b[0]).abs() < f32::EPSILON {
-        min[0] -= t;
-        max[0] += t;
-    } else if (a[1] - b[1]).abs() < f32::EPSILON {
+    let dx = (a[0] - b[0]).abs();
+    let dy = (a[1] - b[1]).abs();
+
+    if dx < f32::EPSILON {
+        // Edge runs along X — thicken in Y and Z.
         min[1] -= t;
         max[1] += t;
-    } else {
         min[2] -= t;
         max[2] += t;
+    } else if dy < f32::EPSILON {
+        // Edge runs along Y — thicken in X and Z.
+        min[0] -= t;
+        max[0] += t;
+        min[2] -= t;
+        max[2] += t;
+    } else {
+        // Edge runs along Z — thicken in X and Y.
+        min[0] -= t;
+        max[0] += t;
+        min[1] -= t;
+        max[1] += t;
     }
 
     let center = [
