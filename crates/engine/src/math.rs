@@ -78,7 +78,7 @@ impl Mat4 {
         Self {
             cols: [
                 [f / aspect, 0.0, 0.0, 0.0],
-                [0.0, -f, 0.0, 0.0],
+                [0.0, f, 0.0, 0.0],
                 [0.0, 0.0, (far + near) * nf, -1.0],
                 [0.0, 0.0, 2.0 * far * near * nf, 0.0],
             ],
@@ -256,6 +256,7 @@ pub fn screen_to_world_ray(
     inv_view_proj: Mat4,
 ) -> (Vec3, Vec3) {
     let ndc_x = (mouse_x / width) * 2.0 - 1.0;
+    // OpenGL-style NDC Y-up; matches +f perspective projection.
     let ndc_y = 1.0 - (mouse_y / height) * 2.0;
 
     let (near, w_near) = inv_view_proj.transform_point(Vec3::new(ndc_x, ndc_y, -1.0));
@@ -278,3 +279,25 @@ pub fn ray_plane_y_intersection(origin: Vec3, dir: Vec3) -> Option<Vec3> {
 }
 
 pub const DEFAULT_FOV_Y: f32 = PI / 4.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn perspective_places_world_up_in_upper_screen() {
+        let p = Mat4::perspective(DEFAULT_FOV_Y, 1.0, 0.1, 100.0);
+        let v = Mat4::look_at(
+            Vec3::new(5.0, 5.0, 5.0),
+            Vec3::ZERO,
+            Vec3::new(0.0, 1.0, 0.0),
+        );
+        let vp = p.mul(v);
+        let (clip, w) = vp.transform_point(Vec3::new(0.0, 2.0, 0.0));
+        let ndc_y = clip.y / w;
+        assert!(
+            ndc_y > 0.0,
+            "world +Y should project to upper NDC, got {ndc_y}"
+        );
+    }
+}
