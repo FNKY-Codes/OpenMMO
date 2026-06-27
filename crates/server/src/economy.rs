@@ -389,13 +389,17 @@ pub fn match_offers(world: &mut GameWorld) {
                     .push(sell.price_per);
                 world.economy.market_offers[bi].quantity -= qty;
                 world.economy.market_offers[si].quantity -= qty;
+                let mut sell_idx = si;
                 if world.economy.market_offers[bi].quantity == 0 {
                     world.economy.market_offers.remove(bi);
+                    if sell_idx > bi {
+                        sell_idx -= 1;
+                    }
                 }
-                if si < world.economy.market_offers.len()
-                    && world.economy.market_offers[si].quantity == 0
+                if sell_idx < world.economy.market_offers.len()
+                    && world.economy.market_offers[sell_idx].quantity == 0
                 {
-                    world.economy.market_offers.remove(si);
+                    world.economy.market_offers.remove(sell_idx);
                 }
                 world.audit(&format!(
                     "Open Market matched {} x item {}",
@@ -525,5 +529,77 @@ mod tests {
                 .map(|s| s.item_id),
             Some(ItemId(2))
         );
+    }
+
+    #[test]
+    fn match_offers_pairs_buy_and_sell_at_compatible_prices() {
+        let mut world = GameWorld::new(ContentPack::default());
+        let buyer_id = PlayerId(Uuid::from_u128(1));
+        let seller_id = PlayerId(Uuid::from_u128(2));
+        let mut buyer_state = test_player(1, "buyer");
+        buyer_state.inventory.slots[0] = Some(openmmo_common::InventorySlot {
+            item_id: ItemId(1),
+            quantity: 100,
+        });
+        world.players.insert(buyer_id, buyer_state);
+        world.players.insert(seller_id, test_player(2, "seller"));
+
+        world.economy.market_offers.push(openmmo_common::MarketOffer {
+            id: Uuid::new_v4(),
+            player_name: "buyer".into(),
+            item_id: ItemId(2),
+            quantity: 5,
+            price_per: 20,
+            is_buy: true,
+            created_tick: 0,
+        });
+        world.economy.market_offers.push(openmmo_common::MarketOffer {
+            id: Uuid::new_v4(),
+            player_name: "seller".into(),
+            item_id: ItemId(2),
+            quantity: 5,
+            price_per: 15,
+            is_buy: false,
+            created_tick: 0,
+        });
+
+        match_offers(&mut world);
+        assert!(world.economy.market_offers.is_empty());
+        let buyer = world.players.get(&buyer_id).unwrap();
+        assert!(
+            buyer
+                .inventory
+                .slots
+                .iter()
+                .flatten()
+                .any(|s| s.item_id == ItemId(2))
+        );
+    }
+
+    #[test]
+    fn match_offers_skips_when_buy_price_too_low() {
+        let mut world = GameWorld::new(ContentPack::default());
+        world.players.insert(PlayerId(Uuid::from_u128(1)), test_player(1, "buyer"));
+        world.players.insert(PlayerId(Uuid::from_u128(2)), test_player(2, "seller"));
+        world.economy.market_offers.push(openmmo_common::MarketOffer {
+            id: Uuid::new_v4(),
+            player_name: "buyer".into(),
+            item_id: ItemId(2),
+            quantity: 1,
+            price_per: 5,
+            is_buy: true,
+            created_tick: 0,
+        });
+        world.economy.market_offers.push(openmmo_common::MarketOffer {
+            id: Uuid::new_v4(),
+            player_name: "seller".into(),
+            item_id: ItemId(2),
+            quantity: 1,
+            price_per: 10,
+            is_buy: false,
+            created_tick: 0,
+        });
+        match_offers(&mut world);
+        assert_eq!(world.economy.market_offers.len(), 2);
     }
 }

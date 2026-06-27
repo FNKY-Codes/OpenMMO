@@ -74,6 +74,46 @@ pub async fn save_player(database_url: &str, player: &PlayerState) -> anyhow::Re
     }
 }
 
+pub fn hash_password(password: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(password.as_bytes()))
+}
+
+pub async fn authenticate_account(
+    database_url: &str,
+    username: &str,
+    password: &str,
+) -> anyhow::Result<bool> {
+    #[cfg(feature = "postgres")]
+    {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(database_url)
+            .await?;
+        let hash = hash_password(password);
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT password_hash FROM accounts WHERE username = $1")
+                .bind(username)
+                .fetch_optional(&pool)
+                .await?;
+        if let Some((stored,)) = row {
+            return Ok(stored == hash);
+        }
+        sqlx::query("INSERT INTO accounts (id, username, password_hash) VALUES ($1, $2, $3)")
+            .bind(uuid::Uuid::new_v4())
+            .bind(username)
+            .bind(hash)
+            .execute(&pool)
+            .await?;
+        return Ok(true);
+    }
+    #[cfg(not(feature = "postgres"))]
+    {
+        let _ = (database_url, username, password);
+        Ok(true)
+    }
+}
+
 pub async fn load_or_create_player(
     database_url: &str,
     username: &str,

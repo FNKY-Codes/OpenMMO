@@ -1,9 +1,10 @@
-use openmmo_common::{EntityId, EquipSlot, HarvestTag, PlayerAction, PlayerId, Skill, TilePos, ToolTag};
+use openmmo_common::{ContentPack, EntityId, EquipSlot, HarvestTag, ItemId, PlayerAction, PlayerId, Skill, TilePos, ToolTag};
 use openmmo_protocol::{ChatChannel, ClientMessage, LedgerContract, ServerMessage};
 use rand::Rng;
 
 use crate::combat::{
     boss_attack_player, npc_attack_player, player_attack_boss, player_attack_npc, use_gadget,
+    XpGrant,
 };
 use crate::pathfinding::{find_attack_path, find_path};
 use crate::state::GameWorld;
@@ -46,14 +47,19 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                         }
                         player.action = PlayerAction::Idle;
                     } else {
-                        *index += 1;
-                        player.position = path[*index];
-                        player.last_position = player.position;
-                        player.ticks_stationary = 1;
-                        moved_players.push((player.id, player.position));
-                        if let Some(target) = *attack_target {
-                            let target_pos = target_positions.get(&target).copied();
-                            try_begin_combat_from_walk(player, target_pos);
+                        let from = player.position;
+                        if crate::anticheat::detect_speed_hack(from, next_pos, 1) {
+                            player.action = PlayerAction::Idle;
+                        } else {
+                            *index += 1;
+                            player.position = path[*index];
+                            player.last_position = player.position;
+                            player.ticks_stationary = 1;
+                            moved_players.push((player.id, player.position));
+                            if let Some(target) = *attack_target {
+                                let target_pos = target_positions.get(&target).copied();
+                                try_begin_combat_from_walk(player, target_pos);
+                            }
                         }
                     }
                 } else if let (Some(target), Some(style)) = (*attack_target, *attack_style) {
@@ -278,11 +284,12 @@ pub fn handle_client_message(
         }
         ClientMessage::DialogueSelect {
             npc_entity,
+            dialogue_id,
             option_index,
         } => {
             out.extend(
                 crate::quest::handle_dialogue_select(
-                    world, player_id, npc_entity, option_index,
+                    world, player_id, npc_entity, &dialogue_id, option_index,
                 )
                 .into_iter()
                 .map(route),
@@ -378,7 +385,11 @@ fn try_begin_combat_from_walk(
         return;
     };
     if player.position.chebyshev_distance(&target_pos) <= 1 {
-        player.action = PlayerAction::Combat { target, style };
+        player.action = PlayerAction::Combat {
+            target,
+            style,
+            player_attack_cooldown: 0,
+        };
     }
 }
 
@@ -406,7 +417,11 @@ fn retry_attack_path(
             attack_style: Some(style),
         };
     } else {
-        player.action = PlayerAction::Combat { target, style };
+        player.action = PlayerAction::Combat {
+            target,
+            style,
+            player_attack_cooldown: 0,
+        };
     }
 }
 
@@ -526,7 +541,11 @@ fn handle_attack(
     player.combat_target = Some(target);
 
     if player.position.chebyshev_distance(&target_pos) <= 1 {
-        player.action = PlayerAction::Combat { target, style };
+        player.action = PlayerAction::Combat {
+            target,
+            style,
+            player_attack_cooldown: 0,
+        };
         return Vec::new();
     }
 
@@ -540,7 +559,11 @@ fn handle_attack(
         };
         player.ticks_stationary = 0;
     } else {
-        player.action = PlayerAction::Combat { target, style };
+        player.action = PlayerAction::Combat {
+            target,
+            style,
+            player_attack_cooldown: 0,
+        };
     }
     Vec::new()
 }
@@ -805,25 +828,14 @@ fn complete_scavenge(
             ));
         }
         messages.push((MessageTarget::Player(player_id), inventory_update(player)));
-        messages.push((
-            MessageTarget::Player(player_id),
-            ServerMessage::XpDrop {
-                skill: Skill::Scavenging,
-                amount: def.scavenging_xp,
-            },
-        ));
         levels
     };
-    for lvl in levels {
-        if let Some(player) = world.players.get(&player_id) {
-            messages.push((
-                MessageTarget::Player(player_id),
-                ServerMessage::SkillUpdate {
-                    skills: player.skills.clone(),
-                    levels_gained: vec![(Skill::Scavenging, lvl)],
-                },
-            ));
+    if let Some(player) = world.players.get(&player_id) {
+        for msg in push_skill_xp_messages(player, Skill::Scavenging, def.scavenging_xp, levels.clone()) {
+            messages.push((MessageTarget::Player(player_id), msg));
         }
+    }
+    for lvl in levels {
         crate::quest::on_skill_level(world, player_id, Skill::Scavenging, lvl)
             .into_iter()
             .for_each(|msg| messages.push((MessageTarget::Player(player_id), msg)));
@@ -908,25 +920,19 @@ fn complete_refine(
             .grant_xp(Skill::Fabrication, recipe.fabrication_xp);
         player.action = PlayerAction::Idle;
         messages.push((MessageTarget::Player(player_id), inventory_update(player)));
-        messages.push((
-            MessageTarget::Player(player_id),
-            ServerMessage::XpDrop {
-                skill: Skill::Fabrication,
-                amount: recipe.fabrication_xp,
-            },
-        ));
         levels
     };
-    for lvl in levels {
-        if let Some(player) = world.players.get(&player_id) {
-            messages.push((
-                MessageTarget::Player(player_id),
-                ServerMessage::SkillUpdate {
-                    skills: player.skills.clone(),
-                    levels_gained: vec![(Skill::Fabrication, lvl)],
-                },
-            ));
+    if let Some(player) = world.players.get(&player_id) {
+        for msg in push_skill_xp_messages(
+            player,
+            Skill::Fabrication,
+            recipe.fabrication_xp,
+            levels.clone(),
+        ) {
+            messages.push((MessageTarget::Player(player_id), msg));
         }
+    }
+    for lvl in levels {
         crate::quest::on_skill_level(world, player_id, Skill::Fabrication, lvl)
             .into_iter()
             .for_each(|msg| messages.push((MessageTarget::Player(player_id), msg)));
@@ -934,6 +940,208 @@ fn complete_refine(
     crate::quest::on_refine(world, player_id, recipe_id)
         .into_iter()
         .for_each(|msg| messages.push((MessageTarget::Player(player_id), msg)));
+}
+
+fn push_combat_xp(
+    pid: PlayerId,
+    player: &openmmo_common::PlayerState,
+    grants: &[XpGrant],
+    messages: &mut Vec<(MessageTarget, ServerMessage)>,
+) {
+    for msg in skill_xp_messages(player, grants) {
+        messages.push((MessageTarget::Player(pid), msg));
+    }
+}
+
+fn tick_player_combat(
+    world: &mut GameWorld,
+    pid: PlayerId,
+    target: EntityId,
+    style: openmmo_common::CombatStyle,
+    mut player_attack_cooldown: u32,
+    content: &ContentPack,
+    messages: &mut Vec<(MessageTarget, ServerMessage)>,
+) {
+    use crate::combat::{npc_attack_ticks, player_attack_ticks};
+
+    let boss_target = world.boss.as_ref().map(|b| b.entity_id) == Some(target);
+    let in_range = if boss_target {
+        world
+            .players
+            .get(&pid)
+            .zip(world.boss.as_ref())
+            .map(|(p, b)| p.position.chebyshev_distance(&b.position) <= 1)
+            .unwrap_or(false)
+    } else {
+        world
+            .players
+            .get(&pid)
+            .zip(world.npcs.get(&target))
+            .map(|(p, n)| n.alive && p.position.chebyshev_distance(&n.position) <= 1)
+            .unwrap_or(false)
+    };
+
+    if !in_range {
+        if let Some(player) = world.players.get_mut(&pid) {
+            player.action = PlayerAction::Combat {
+                target,
+                style,
+                player_attack_cooldown,
+            };
+        }
+        return;
+    }
+
+    if player_attack_cooldown > 0 {
+        player_attack_cooldown -= 1;
+    }
+
+    if boss_target {
+        if let Some(boss) = world.boss.as_mut() {
+            if boss.attack_cooldown > 0 {
+                boss.attack_cooldown -= 1;
+            }
+        }
+    } else if let Some(npc) = world.npcs.get_mut(&target) {
+        if npc.attack_cooldown > 0 {
+            npc.attack_cooldown -= 1;
+        }
+    }
+
+    let player_eid = world.players.get(&pid).map(|p| p.entity_id);
+
+    if player_attack_cooldown == 0 {
+        if boss_target {
+            if let (Some(player), Some(boss)) =
+                (world.players.get_mut(&pid), world.boss.as_mut())
+            {
+                if let Some(hit) = player_attack_boss(player, boss, style, content) {
+                    let damage = hit.damage;
+                    let xp_grants = hit.xp_grants;
+                    if let Some(eid) = player_eid {
+                        messages.push((
+                            MessageTarget::Player(pid),
+                            ServerMessage::Damage {
+                                source: eid,
+                                target,
+                                amount: damage,
+                                style,
+                            },
+                        ));
+                    }
+                    push_combat_xp(pid, player, &xp_grants, messages);
+                    player_attack_cooldown = player_attack_ticks(player, content);
+                }
+                let boss_dead = world.boss.as_ref().map(|b| b.hp == 0).unwrap_or(false);
+                if boss_dead {
+                    world.boss = None;
+                    messages.push((
+                        MessageTarget::Player(pid),
+                        ServerMessage::Death {
+                            entity: target,
+                            killer: player_eid,
+                        },
+                    ));
+                }
+            }
+        } else if let (Some(player), Some(npc)) =
+            (world.players.get_mut(&pid), world.npcs.get_mut(&target))
+        {
+            if let Some(hit) = player_attack_npc(player, npc, style, content) {
+                let damage = hit.damage;
+                let xp_grants = hit.xp_grants;
+                if let Some(eid) = player_eid {
+                    messages.push((
+                        MessageTarget::Player(pid),
+                        ServerMessage::Damage {
+                            source: eid,
+                            target,
+                            amount: damage,
+                            style,
+                        },
+                    ));
+                }
+                push_combat_xp(pid, player, &xp_grants, messages);
+                player_attack_cooldown = player_attack_ticks(player, content);
+                let npc_dead = !npc.alive;
+                let npc_id_copy = npc.npc_id;
+                if npc_dead {
+                    messages.push((
+                        MessageTarget::Player(pid),
+                        ServerMessage::Death {
+                            entity: target,
+                            killer: player_eid,
+                        },
+                    ));
+                    handle_npc_loot(world, pid, target, messages);
+                    crate::quest::on_kill(world, pid, npc_id_copy)
+                        .into_iter()
+                        .for_each(|msg| messages.push((MessageTarget::Player(pid), msg)));
+                }
+            }
+        }
+    }
+
+    if boss_target {
+        if let Some(boss) = world.boss.as_ref() {
+            if boss.attack_cooldown == 0 {
+                if let Some(player) = world.players.get_mut(&pid) {
+                    let player_eid = player.entity_id;
+                    if let Some(hit) = boss_attack_player(boss, player, content) {
+                        messages.push((
+                            MessageTarget::Player(pid),
+                            ServerMessage::Damage {
+                                source: target,
+                                target: player_eid,
+                                amount: hit.damage,
+                                style: openmmo_common::CombatStyle::Melee,
+                            },
+                        ));
+                        push_combat_xp(pid, player, &hit.xp_grants, messages);
+                        if player.hp == 0 {
+                            respawn_player(world, pid, messages);
+                        }
+                    }
+                }
+                if let Some(boss) = world.boss.as_mut() {
+                    boss.attack_cooldown = boss.attack_ticks;
+                }
+            }
+        }
+    } else if let Some(npc) = world.npcs.get(&target) {
+        if npc.alive && npc.attack_cooldown == 0 {
+            let npc_id = npc.npc_id;
+            if let Some(player) = world.players.get_mut(&pid) {
+                let player_eid = player.entity_id;
+                if let Some(hit) = npc_attack_player(npc, player, content) {
+                    messages.push((
+                        MessageTarget::Player(pid),
+                        ServerMessage::Damage {
+                            source: target,
+                            target: player_eid,
+                            amount: hit.damage,
+                            style: openmmo_common::CombatStyle::Melee,
+                        },
+                    ));
+                    push_combat_xp(pid, player, &hit.xp_grants, messages);
+                    if player.hp == 0 {
+                        respawn_player(world, pid, messages);
+                    }
+                }
+            }
+            if let Some(npc) = world.npcs.get_mut(&target) {
+                npc.attack_cooldown = npc_attack_ticks(npc_id, content);
+            }
+        }
+    }
+
+    if let Some(player) = world.players.get_mut(&pid) {
+        player.action = PlayerAction::Combat {
+            target,
+            style,
+            player_attack_cooldown,
+        };
+    }
 }
 
 fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerMessage)>) {
@@ -946,156 +1154,20 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
     for (pid, action) in player_actions {
         let content = world.content.clone();
         match action {
-            PlayerAction::Combat { target, style } => {
-                let mut rng = rand::thread_rng();
-                let boss_target = world.boss.as_ref().map(|b| b.entity_id) == Some(target);
-                if boss_target {
-                    if rng.gen_bool(0.5) {
-                        let in_range = world
-                            .players
-                            .get(&pid)
-                            .zip(world.boss.as_ref())
-                            .map(|(p, b)| p.position.chebyshev_distance(&b.position) <= 1)
-                            .unwrap_or(false);
-                        if in_range {
-                            let player_eid = world.players.get(&pid).map(|p| p.entity_id);
-                            if let (Some(player), Some(boss)) =
-                                (world.players.get_mut(&pid), world.boss.as_mut())
-                            {
-                                if let Some(dmg) =
-                                    player_attack_boss(player, boss, style, &content)
-                                {
-                                    if let Some(eid) = player_eid {
-                                        messages.push((
-                                            MessageTarget::Player(pid),
-                                            ServerMessage::Damage {
-                                                source: eid,
-                                                target,
-                                                amount: dmg,
-                                                style,
-                                            },
-                                        ));
-                                    }
-                                }
-                                let boss_dead =
-                                    world.boss.as_ref().map(|b| b.hp == 0).unwrap_or(false);
-                                drop(player);
-                                if boss_dead {
-                                    world.boss = None;
-                                    messages.push((
-                                        MessageTarget::Player(pid),
-                                        ServerMessage::Death {
-                                            entity: target,
-                                            killer: player_eid,
-                                        },
-                                    ));
-                                }
-                            }
-                        }
-                    } else {
-                        let in_range = world
-                            .players
-                            .get(&pid)
-                            .zip(world.boss.as_ref())
-                            .map(|(p, b)| p.position.chebyshev_distance(&b.position) <= 1)
-                            .unwrap_or(false);
-                        if in_range {
-                            if let (Some(boss), Some(player)) =
-                                (world.boss.as_ref(), world.players.get_mut(&pid))
-                            {
-                                let player_eid = player.entity_id;
-                                if let Some(dmg) = boss_attack_player(boss, player, &content) {
-                                    messages.push((
-                                        MessageTarget::Player(pid),
-                                        ServerMessage::Damage {
-                                            source: target,
-                                            target: player_eid,
-                                            amount: dmg,
-                                            style: openmmo_common::CombatStyle::Melee,
-                                        },
-                                    ));
-                                    if player.hp == 0 {
-                                        respawn_player(world, pid, messages);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    continue;
-                }
-                if rng.gen_bool(0.5) {
-                    let in_range = world
-                        .players
-                        .get(&pid)
-                        .zip(world.npcs.get(&target))
-                        .map(|(p, n)| p.position.chebyshev_distance(&n.position) <= 1)
-                        .unwrap_or(false);
-                    if in_range {
-                        let player_eid = world.players.get(&pid).map(|p| p.entity_id);
-                        if let (Some(player), Some(npc)) =
-                            (world.players.get_mut(&pid), world.npcs.get_mut(&target))
-                        {
-                            if let Some(dmg) = player_attack_npc(player, npc, style, &content) {
-                                if let Some(eid) = player_eid {
-                                    messages.push((
-                                        MessageTarget::Player(pid),
-                                        ServerMessage::Damage {
-                                            source: eid,
-                                            target,
-                                            amount: dmg,
-                                            style,
-                                        },
-                                    ));
-                                }
-                                let npc_dead = !npc.alive;
-                                let npc_id_copy = npc.npc_id;
-                                drop(npc);
-                                drop(player);
-                                if npc_dead {
-                                    messages.push((
-                                        MessageTarget::Player(pid),
-                                        ServerMessage::Death {
-                                            entity: target,
-                                            killer: player_eid,
-                                        },
-                                    ));
-                                    handle_npc_loot(world, pid, target, messages);
-                                    crate::quest::on_kill(world, pid, npc_id_copy)
-                                        .into_iter()
-                                        .for_each(|msg| messages.push((MessageTarget::Player(pid), msg)));
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    let in_range = world
-                        .players
-                        .get(&pid)
-                        .zip(world.npcs.get(&target))
-                        .map(|(p, n)| n.alive && p.position.chebyshev_distance(&n.position) <= 1)
-                        .unwrap_or(false);
-                    if in_range {
-                        if let (Some(npc), Some(player)) =
-                            (world.npcs.get(&target), world.players.get_mut(&pid))
-                        {
-                            let player_eid = player.entity_id;
-                            if let Some(dmg) = npc_attack_player(npc, player, &content) {
-                                messages.push((
-                                    MessageTarget::Player(pid),
-                                    ServerMessage::Damage {
-                                        source: target,
-                                        target: player_eid,
-                                        amount: dmg,
-                                        style: openmmo_common::CombatStyle::Melee,
-                                    },
-                                ));
-                                if player.hp == 0 {
-                                    respawn_player(world, pid, messages);
-                                }
-                            }
-                        }
-                    }
-                }
+            PlayerAction::Combat {
+                target,
+                style,
+                player_attack_cooldown,
+            } => {
+                tick_player_combat(
+                    world,
+                    pid,
+                    target,
+                    style,
+                    player_attack_cooldown,
+                    &content,
+                    messages,
+                );
             }
             PlayerAction::Casting { target, spell_id } => {
                 let spell = world.content.spell(&spell_id).cloned();
@@ -1117,7 +1189,7 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                     (world.players.get_mut(&pid), world.npcs.get_mut(&target))
                 {
                     let npc_dead =
-                        if let Some(dmg) =
+                        if let Some(hit) =
                             use_gadget(player, npc, spell.max_hit, spell.xp, &content)
                         {
                             messages.push((
@@ -1125,10 +1197,11 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                                 ServerMessage::Damage {
                                     source: player_eid,
                                     target,
-                                    amount: dmg,
+                                    amount: hit.damage,
                                     style: openmmo_common::CombatStyle::Magic,
                                 },
                             ));
+                            push_combat_xp(pid, player, &hit.xp_grants, messages);
                             !npc.alive
                         } else {
                             false
@@ -1310,6 +1383,41 @@ fn tick_ledger_contracts(world: &mut GameWorld, messages: &mut Vec<(MessageTarge
             ));
         }
     }
+}
+
+fn skill_xp_messages(player: &openmmo_common::PlayerState, grants: &[XpGrant]) -> Vec<ServerMessage> {
+    let mut messages = Vec::new();
+    let mut levels_gained = Vec::new();
+    for grant in grants {
+        messages.push(ServerMessage::XpDrop {
+            skill: grant.skill,
+            amount: grant.amount,
+        });
+        for level in &grant.levels_gained {
+            levels_gained.push((grant.skill, *level));
+        }
+    }
+    messages.push(ServerMessage::SkillUpdate {
+        skills: player.skills.clone(),
+        levels_gained,
+    });
+    messages
+}
+
+fn push_skill_xp_messages(
+    player: &openmmo_common::PlayerState,
+    skill: Skill,
+    amount: u64,
+    levels_gained: Vec<u32>,
+) -> Vec<ServerMessage> {
+    skill_xp_messages(
+        player,
+        &[XpGrant {
+            skill,
+            amount,
+            levels_gained,
+        }],
+    )
 }
 
 pub fn inventory_update(player: &openmmo_common::PlayerState) -> ServerMessage {
@@ -1522,7 +1630,17 @@ fn handle_shop_buy(
         .item(item_id)
         .map(|i| i.stackable)
         .unwrap_or(true);
-    let _ = player.inventory.add_item(item_id, quantity, stackable);
+    let remaining = player.inventory.add_item(item_id, quantity, stackable);
+    if remaining > 0 {
+        // Refund currency for items that could not fit.
+        let refund = stock.price.saturating_mul(remaining);
+        let _ = player.inventory.add_item(ItemId(1), refund, true);
+        if remaining == quantity {
+            return vec![ServerMessage::Error {
+                message: "Inventory full".into(),
+            }];
+        }
+    }
     vec![inventory_update(player)]
 }
 
@@ -1590,25 +1708,47 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                 .unwrap_or(npc_pos);
             if npc_pos.chebyshev_distance(&player_pos) > 1 {
                 move_npc_toward(world, entity_id, npc_pos, player_pos);
-            } else if let (Some(npc), Some(player)) = (
-                world.npcs.get(&entity_id),
-                world.players.get_mut(&target_pid),
-            ) {
-                let content = world.content.clone();
-                let player_eid = player.entity_id;
-                if let Some(dmg) = crate::combat::npc_attack_player(npc, player, &content) {
-                    messages.push((
-                        MessageTarget::Player(target_pid),
-                        ServerMessage::Damage {
-                            source: entity_id,
-                            target: player_eid,
-                            amount: dmg,
-                            style: openmmo_common::CombatStyle::Melee,
-                        },
-                    ));
-                    if player.hp == 0 {
-                        drop(player);
-                        respawn_player(world, target_pid, messages);
+            } else {
+                let should_attack = {
+                    if let Some(npc) = world.npcs.get_mut(&entity_id) {
+                        if npc.attack_cooldown > 0 {
+                            npc.attack_cooldown -= 1;
+                            false
+                        } else {
+                            true
+                        }
+                    } else {
+                        false
+                    }
+                };
+                if should_attack {
+                    if let (Some(npc), Some(player)) = (
+                        world.npcs.get(&entity_id),
+                        world.players.get_mut(&target_pid),
+                    ) {
+                        let content = world.content.clone();
+                        let player_eid = player.entity_id;
+                        let npc_id = npc.npc_id;
+                        if let Some(hit) = crate::combat::npc_attack_player(npc, player, &content) {
+                            messages.push((
+                                MessageTarget::Player(target_pid),
+                                ServerMessage::Damage {
+                                    source: entity_id,
+                                    target: player_eid,
+                                    amount: hit.damage,
+                                    style: openmmo_common::CombatStyle::Melee,
+                                },
+                            ));
+                            push_combat_xp(target_pid, player, &hit.xp_grants, messages);
+                            if player.hp == 0 {
+                                drop(player);
+                                respawn_player(world, target_pid, messages);
+                            }
+                        }
+                        if let Some(npc) = world.npcs.get_mut(&entity_id) {
+                            npc.attack_cooldown =
+                                crate::combat::npc_attack_ticks(npc_id, &world.content);
+                        }
                     }
                 }
             }

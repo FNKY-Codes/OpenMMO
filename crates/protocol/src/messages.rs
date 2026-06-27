@@ -12,6 +12,8 @@ pub enum ClientMessage {
     Login {
         username: String,
         character_name: String,
+        #[serde(default)]
+        password: String,
     },
     WalkIntent {
         target: TilePos,
@@ -94,6 +96,7 @@ pub enum ClientMessage {
     },
     DialogueSelect {
         npc_entity: EntityId,
+        dialogue_id: String,
         option_index: usize,
     },
     SelectSpecialization {

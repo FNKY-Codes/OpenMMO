@@ -216,6 +216,7 @@ mod tests {
                 fortitude_bonus: 0,
                 tool_tag: None,
                 alchemy_value: 0,
+                attack_ticks: 4,
             }],
             objects: vec![openmmo_common::ObjectDef {
                 id: ObjectId(1),

@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ItemId, NpcId, ObjectId, QuestId, RegionId, TilePos};
 
+fn default_attack_ticks() -> u32 {
+    4
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemDef {
     pub id: ItemId,
@@ -14,6 +18,8 @@ pub struct ItemDef {
     pub fortitude_bonus: i32,
     pub tool_tag: Option<crate::ToolTag>,
     pub alchemy_value: u32,
+    #[serde(default = "default_attack_ticks")]
+    pub attack_ticks: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +91,8 @@ pub struct NpcDef {
     pub fortitude: u32,
     pub aggro_range: i32,
     pub respawn_ticks: u32,
+    #[serde(default = "default_attack_ticks")]
+    pub attack_ticks: u32,
     pub loot_table: Vec<LootEntry>,
 }
 

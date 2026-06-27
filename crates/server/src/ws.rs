@@ -204,6 +204,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             ClientMessage::Login {
                 username,
                 character_name,
+                password,
             } => {
                 let mut world = state.world.write().await;
                 if !crate::anticheat::validate_username(username) {
@@ -218,6 +219,23 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     }
                     continue;
                 }
+                if let Ok(db_url) = std::env::var("DATABASE_URL") {
+                    let authed = persistence::authenticate_account(&db_url, username, password)
+                        .await
+                        .unwrap_or(false);
+                    if !authed {
+                        drop(world);
+                        let login = ServerMessage::LoginResult {
+                            success: false,
+                            player_id: None,
+                            message: "Invalid credentials".into(),
+                        };
+                        if let Ok(json) = encode_server(&login) {
+                            let _ = conn_tx.send(json);
+                        }
+                        continue;
+                    }
+                }
                 let pid = if let Ok(db_url) = std::env::var("DATABASE_URL") {
                     persistence::load_or_create_player(&db_url, username, character_name, &mut world)
                         .await
@@ -225,6 +243,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 } else {
                     world.add_player(character_name.clone())
                 };
+                if let Ok(redis_url) = std::env::var("REDIS_URL") {
+                    let _ = crate::session::store_session(&redis_url, username, pid).await;
+                }
                 if world.players.get(&pid).is_some_and(|p| p.inventory.slots.iter().all(|s| s.is_none()))
                 {
                     let starter_items: Vec<_> = world

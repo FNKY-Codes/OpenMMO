@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
-use openmmo_common::{RegionDef, TilePos, WorldEntity};
+use openmmo_common::{EntityId, RegionDef, TilePos, WorldEntity};
 
 use crate::camera::Camera;
 use crate::entity_bounds;
@@ -36,6 +36,14 @@ struct TransparentDraw {
     outline_len: u32,
     sort_key: f32,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoverTarget {
+    Entity(EntityId),
+    Tile(TilePos),
+}
+
+const HOVER_OUTLINE_COLOR: [f32; 4] = [0.4, 0.9, 0.3, 0.95];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TileCacheKey {
@@ -420,6 +428,7 @@ impl Renderer {
         entities: &[WorldEntity],
         local_player: Option<openmmo_common::PlayerId>,
         movement_interp: &EntityMovementInterp,
+        hover: Option<HoverTarget>,
     ) {
         let vp = self
             .camera
@@ -527,6 +536,21 @@ impl Renderer {
         self.scratch_upload.extend(&transparent_entity_vertices);
         self.scratch_upload.extend(&transparent_outline_vertices);
 
+        let mut hover_outline_vertices = Vec::new();
+        if let Some(hover_target) = hover {
+            self.build_hover_outline(
+                hover_target,
+                region,
+                entities,
+                movement_interp,
+                now,
+                &mut hover_outline_vertices,
+            );
+        }
+        self.scratch_upload.extend(&hover_outline_vertices);
+        let hover_outline_base = transparent_outline_base + transparent_outline_vertices.len() as u32;
+        let hover_outline_count = hover_outline_vertices.len() as u32;
+
         self.scratch_opaque_entity_vertices = opaque_entity_vertices;
         self.scratch_opaque_outline_vertices = opaque_outline_vertices;
         self.scratch_transparent_entity_vertices = transparent_entity_vertices;
@@ -613,6 +637,61 @@ impl Renderer {
                     transparent_outline_base + draw.outline_start
                         ..transparent_outline_base + draw.outline_start + draw.outline_len,
                     0..1,
+                );
+            }
+        }
+
+        if hover_outline_count > 0 {
+            render_pass.set_pipeline(&self.outline_pipeline);
+            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.draw(
+                hover_outline_base..hover_outline_base + hover_outline_count,
+                0..1,
+            );
+        }
+    }
+
+    fn build_hover_outline(
+        &self,
+        hover: HoverTarget,
+        region: Option<&RegionDef>,
+        entities: &[WorldEntity],
+        movement_interp: &EntityMovementInterp,
+        now: Instant,
+        vertices: &mut Vec<Vertex>,
+    ) {
+        match hover {
+            HoverTarget::Entity(entity_id) => {
+                let entity = entities.iter().find(|e| e.entity_id == entity_id);
+                if let Some(entity) = entity {
+                    let visual_base = movement_interp
+                        .visual_center(entity.entity_id, now, region)
+                        .or_else(|| {
+                            entity_bounds::entity_tile(entity).map(|tile| {
+                                let [cx, _, cz] = Self::tile_center(tile);
+                                let surface_y = Self::tile_surface_height(tile, region);
+                                [cx, surface_y, cz]
+                            })
+                        });
+                    if let Some([cx, surface_y, cz]) = visual_base {
+                        let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
+                        let scale = 1.08;
+                        let center = [cx, surface_y + height * 0.5, cz];
+                        let size = [width * scale, height * scale, width * scale];
+                        add_box_edge_lines(center, size, HOVER_OUTLINE_COLOR, vertices, true);
+                    }
+                }
+            }
+            HoverTarget::Tile(tile) => {
+                let [cx, _, cz] = Self::tile_center(tile);
+                let surface_y = Self::tile_surface_height(tile, region);
+                add_box_edge_lines(
+                    [cx, surface_y + 0.03, cz],
+                    [1.05, 0.06, 1.05],
+                    HOVER_OUTLINE_COLOR,
+                    vertices,
+                    false,
                 );
             }
         }

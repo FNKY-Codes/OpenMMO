@@ -49,13 +49,18 @@ pub fn handle_dialogue_select(
     world: &mut GameWorld,
     player_id: PlayerId,
     npc_entity: EntityId,
+    dialogue_id: &str,
     option_index: usize,
 ) -> Vec<ServerMessage> {
     let npc_id = world.npcs.get(&npc_entity).map(|n| n.npc_id);
     let Some(npc_id) = npc_id else {
         return Vec::new();
     };
-    let dialogue_id = format!("npc_{}", npc_id.0);
+    let dialogue_id = if dialogue_id.is_empty() {
+        format!("npc_{}", npc_id.0)
+    } else {
+        dialogue_id.to_string()
+    };
     let node = world.quests.dialogue_index.get(&dialogue_id).cloned();
     if let Some(node) = node {
         if let Some(opt) = node.options.get(option_index) {
@@ -321,7 +326,8 @@ mod tests {
 
     use super::*;
     use openmmo_common::{
-        ContentPack, HarvestTag, Inventory, NpcId, PlayerState, QuestId, Skill, SkillBook, TilePos,
+        ContentPack, EntityId, HarvestTag, Inventory, NpcId, NpcState, PlayerState, QuestId,
+        Skill, SkillBook, TilePos,
     };
     use uuid::Uuid;
 
@@ -412,5 +418,36 @@ mod tests {
         let journal = quest_journal(&world, pid);
         assert!(!journal.is_empty());
         assert!(journal.iter().any(|(name, _)| name.contains("First Steps")));
+    }
+
+    #[test]
+    fn dialogue_select_opens_shop_from_nested_node() {
+        let (mut world, pid) = world_with_player(1, HashMap::new());
+        let entity_id = EntityId(100);
+        world.npcs.insert(
+            entity_id,
+            NpcState {
+                entity_id,
+                npc_id: NpcId(100),
+                name: "Guide".into(),
+                position: TilePos::new(0, 0),
+                home_position: TilePos::new(0, 0),
+                hp: 10,
+                max_hp: 10,
+                prowess: 0,
+                fortitude: 1,
+                aggro_target: None,
+                respawn_ticks: 0,
+                alive: true,
+                attack_cooldown: 0,
+            },
+        );
+        let msgs = handle_dialogue_select(&mut world, pid, entity_id, "npc_100_callings", 0);
+        assert!(
+            msgs.iter().any(|m| matches!(
+                m,
+                ServerMessage::ShopOpen { shop_id, .. } if shop_id == "starter_supplies"
+            ))
+        );
     }
 }

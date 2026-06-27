@@ -14,7 +14,7 @@ use crate::{
     entity_bounds,
     input::InputState,
     movement_interp::EntityMovementInterp,
-    renderer::Renderer,
+    renderer::{HoverTarget, Renderer},
     ui::{build_context_menu, draw_combat_health_bars, setup_theme, to_client_message, GameUi, UiAction},
 };
 
@@ -24,6 +24,7 @@ pub enum NetCommand {
         url: String,
         username: String,
         character: String,
+        password: String,
     },
     Send(ClientMessage),
 }
@@ -46,6 +47,7 @@ pub struct EngineApp {
     pub combat_opponent: Option<openmmo_common::EntityId>,
     pub net_tx: Option<Sender<NetCommand>>,
     pub net_rx: Option<Receiver<ServerMessage>>,
+    pointer_over_ui: bool,
 }
 
 impl Default for EngineApp {
@@ -68,6 +70,7 @@ impl Default for EngineApp {
             combat_opponent: None,
             net_tx: None,
             net_rx: None,
+            pointer_over_ui: false,
         }
     }
 }
@@ -298,7 +301,7 @@ impl EngineApp {
             ServerMessage::XpDrop { skill, amount } => {
                 self.ui
                     .xp_drops
-                    .push((skill.name().to_string(), amount));
+                    .push((skill.name().to_string(), amount, std::time::Instant::now()));
             }
             ServerMessage::Damage {
                 source,
@@ -390,6 +393,15 @@ impl EngineApp {
             }
             ServerMessage::Error { message } => {
                 self.ui.status = message;
+            }
+            ServerMessage::CollectionLogEntry { item_id, source } => {
+                let name = self
+                    .content
+                    .item(item_id)
+                    .map(|i| i.name.clone())
+                    .unwrap_or_else(|| format!("Item {}", item_id.0));
+                self.ui.collection_log.push((name.clone(), item_id.0));
+                self.ui.status = format!("Collected {name} from {source}");
             }
             _ => {}
         }
@@ -504,6 +516,28 @@ impl EngineApp {
         })
     }
 
+    fn compute_hover(&self, renderer: &Renderer) -> Option<HoverTarget> {
+        if !self.ui.connected || self.pointer_over_ui {
+            return None;
+        }
+        let width = renderer.gpu().config.width;
+        let height = renderer.gpu().config.height;
+        let camera = renderer.camera();
+        if let Some(entity_id) = self.input.entity_under_cursor(
+            camera,
+            width,
+            height,
+            &self.entities,
+            self.region.as_ref(),
+            self.local_player,
+        ) {
+            return Some(HoverTarget::Entity(entity_id));
+        }
+        self.input
+            .tile_under_cursor(camera, width, height)
+            .map(HoverTarget::Tile)
+    }
+
     fn render_frame(
         &mut self,
         egui_ctx: &egui::Context,
@@ -549,6 +583,7 @@ impl EngineApp {
             &self.entities,
             self.local_player,
             &self.movement_interp,
+            self.compute_hover(renderer),
         );
 
         let raw_input = egui_state.take_egui_input(window);
@@ -570,6 +605,9 @@ impl EngineApp {
                     self.hp,
                     self.max_hp,
                     &self.quest_text,
+                    self.combat_opponent,
+                    self.local_player_position(),
+                    self.region.as_ref(),
                 );
 
                 if let Some(opponent) = self.combat_opponent {
@@ -605,6 +643,7 @@ impl EngineApp {
                     url: self.ui.connection_url.clone(),
                     username: self.ui.username.clone(),
                     character: self.ui.character_name.clone(),
+                    password: self.ui.password.clone(),
                 });
             }
             self.ui.status = "Connecting...".into();
@@ -638,12 +677,20 @@ impl EngineApp {
             UiAction::Refine { recipe_id } => {
                 self.send(ClientMessage::Refine { recipe_id });
             }
+            UiAction::CastSpell { target, spell_id } => {
+                self.send(ClientMessage::CastSpell { target, spell_id });
+            }
+            UiAction::SelectSpecialization { skill, branch } => {
+                self.send(ClientMessage::SelectSpecialization { skill, branch });
+            }
             UiAction::DialogueSelect {
                 npc_entity,
+                dialogue_id,
                 option_index,
             } => {
                 self.send(ClientMessage::DialogueSelect {
                     npc_entity,
+                    dialogue_id,
                     option_index,
                 });
             }
@@ -782,6 +829,7 @@ impl EngineApp {
         }
 
         egui_state.handle_platform_output(window, full_output.platform_output);
+        self.pointer_over_ui = egui_ctx.wants_pointer_input();
 
         let screen_desc = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [renderer.gpu().config.width, renderer.gpu().config.height],

@@ -26,6 +26,26 @@ pub fn detect_speed_hack(old: TilePos, new: TilePos, ticks: u64) -> bool {
     old.chebyshev_distance(&new) > max_dist
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openmmo_common::TilePos;
+
+    #[test]
+    fn detect_speed_hack_flags_large_jumps() {
+        let old = TilePos::new(0, 0);
+        let new = TilePos::new(5, 0);
+        assert!(detect_speed_hack(old, new, 1));
+    }
+
+    #[test]
+    fn detect_speed_hack_allows_single_tile_step() {
+        let old = TilePos::new(0, 0);
+        let new = TilePos::new(1, 0);
+        assert!(!detect_speed_hack(old, new, 1));
+    }
+}
+
 pub fn handle_mod_command(
     world: &mut GameWorld,
     moderator: PlayerId,
@@ -81,9 +101,25 @@ pub fn handle_mod_command(
 
 pub struct PluginApi;
 
+pub struct PluginRegistry {
+    pub hooks: Vec<String>,
+}
+
+impl Default for PluginRegistry {
+    fn default() -> Self {
+        Self {
+            hooks: vec!["on_tick".into()],
+        }
+    }
+}
+
 impl PluginApi {
     pub fn on_tick(world: &mut GameWorld) {
-        // Plugin hook: WASM/Lua sandbox executes registered scripts each tick.
+        // Plugin hook point: WASM/Lua sandbox will register scripts here.
         let _ = world.tick;
+    }
+
+    pub fn registry() -> PluginRegistry {
+        PluginRegistry::default()
     }
 }

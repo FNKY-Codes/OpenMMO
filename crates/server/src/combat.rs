@@ -1,6 +1,28 @@
 use openmmo_common::{BossState, CombatStyle, ContentPack, NpcState, PlayerState, Skill};
 use rand::Rng;
 
+#[derive(Debug, Clone)]
+pub struct XpGrant {
+    pub skill: Skill,
+    pub amount: u64,
+    pub levels_gained: Vec<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CombatHit {
+    pub damage: u32,
+    pub xp_grants: Vec<XpGrant>,
+}
+
+fn grant_xp_grant(player: &mut PlayerState, skill: Skill, amount: u64) -> XpGrant {
+    let levels_gained = player.skills.grant_xp(skill, amount);
+    XpGrant {
+        skill,
+        amount,
+        levels_gained,
+    }
+}
+
 pub fn player_max_hit(player: &PlayerState, style: CombatStyle, content: &ContentPack) -> u32 {
     let combat = player.skills.level(Skill::Combat);
     let prowess_bonus = equipment_prowess_bonus(player, content);
@@ -80,6 +102,26 @@ pub fn apply_damage_player(player: &mut PlayerState, amount: u32) {
     player.hp = player.hp.saturating_sub(amount);
 }
 
+pub const DEFAULT_ATTACK_TICKS: u32 = 4;
+
+pub fn player_attack_ticks(player: &PlayerState, content: &ContentPack) -> u32 {
+    if let Some(weapon) = &player.equipment.weapon {
+        content
+            .item(weapon.item_id)
+            .map(|item| item.attack_ticks)
+            .unwrap_or(DEFAULT_ATTACK_TICKS)
+    } else {
+        DEFAULT_ATTACK_TICKS
+    }
+}
+
+pub fn npc_attack_ticks(npc_id: openmmo_common::NpcId, content: &ContentPack) -> u32 {
+    content
+        .npc(npc_id)
+        .map(|npc| npc.attack_ticks)
+        .unwrap_or(DEFAULT_ATTACK_TICKS)
+}
+
 pub fn xp_for_damage(amount: u32, style: CombatStyle) -> (Skill, u64) {
     let xp = amount as u64 * 4;
     match style {
@@ -96,12 +138,15 @@ pub fn npc_attack_player(
     npc: &NpcState,
     player: &mut PlayerState,
     content: &ContentPack,
-) -> Option<u32> {
+) -> Option<CombatHit> {
     if accuracy_roll(npc.prowess, combat_fortitude(player, content)) {
         let dmg = roll_damage(npc.prowess / 2 + 1);
         apply_damage_player(player, dmg);
-        player.skills.grant_xp(Skill::Resilience, dmg as u64 * 2);
-        Some(dmg)
+        let xp = grant_xp_grant(player, Skill::Resilience, dmg as u64 * 2);
+        Some(CombatHit {
+            damage: dmg,
+            xp_grants: vec![xp],
+        })
     } else {
         None
     }
@@ -111,12 +156,15 @@ pub fn boss_attack_player(
     boss: &BossState,
     player: &mut PlayerState,
     content: &ContentPack,
-) -> Option<u32> {
+) -> Option<CombatHit> {
     if accuracy_roll(boss.prowess, combat_fortitude(player, content)) {
         let dmg = roll_damage(boss.prowess / 2 + 1);
         apply_damage_player(player, dmg);
-        player.skills.grant_xp(Skill::Resilience, dmg as u64 * 2);
-        Some(dmg)
+        let xp = grant_xp_grant(player, Skill::Resilience, dmg as u64 * 2);
+        Some(CombatHit {
+            damage: dmg,
+            xp_grants: vec![xp],
+        })
     } else {
         None
     }
@@ -127,16 +175,19 @@ pub fn player_attack_npc(
     npc: &mut NpcState,
     style: CombatStyle,
     content: &ContentPack,
-) -> Option<u32> {
+) -> Option<CombatHit> {
     let attack_stat = player_attack_stat(player, style, content);
     let max_hit = player_max_hit(player, style, content);
     if accuracy_roll(attack_stat, npc.fortitude) {
         let dmg = roll_damage(max_hit);
         apply_damage_npc(npc, dmg);
-        let (skill, xp) = xp_for_damage(dmg, style);
-        player.skills.grant_xp(skill, xp);
-        player.skills.grant_xp(Skill::Endurance, dmg as u64);
-        Some(dmg)
+        let (skill, xp_amount) = xp_for_damage(dmg, style);
+        let primary = grant_xp_grant(player, skill, xp_amount);
+        let endurance = grant_xp_grant(player, Skill::Endurance, dmg as u64);
+        Some(CombatHit {
+            damage: dmg,
+            xp_grants: vec![primary, endurance],
+        })
     } else {
         None
     }
@@ -147,16 +198,19 @@ pub fn player_attack_boss(
     boss: &mut BossState,
     style: CombatStyle,
     content: &ContentPack,
-) -> Option<u32> {
+) -> Option<CombatHit> {
     let attack_stat = player_attack_stat(player, style, content);
     let max_hit = player_max_hit(player, style, content);
     if accuracy_roll(attack_stat, boss.fortitude) {
         let dmg = roll_damage(max_hit);
         boss.hp = boss.hp.saturating_sub(dmg);
-        let (skill, xp) = xp_for_damage(dmg, style);
-        player.skills.grant_xp(skill, xp);
-        player.skills.grant_xp(Skill::Endurance, dmg as u64);
-        Some(dmg)
+        let (skill, xp_amount) = xp_for_damage(dmg, style);
+        let primary = grant_xp_grant(player, skill, xp_amount);
+        let endurance = grant_xp_grant(player, Skill::Endurance, dmg as u64);
+        Some(CombatHit {
+            damage: dmg,
+            xp_grants: vec![primary, endurance],
+        })
     } else {
         None
     }
@@ -168,13 +222,16 @@ pub fn use_gadget(
     max_hit: u32,
     xp: u64,
     content: &ContentPack,
-) -> Option<u32> {
+) -> Option<CombatHit> {
     let attack_stat = player_attack_stat(player, CombatStyle::Magic, content);
     if accuracy_roll(attack_stat, npc.fortitude) {
         let dmg = roll_damage(max_hit);
         apply_damage_npc(npc, dmg);
-        player.skills.grant_xp(Skill::Electrics, xp);
-        Some(dmg)
+        let electrics = grant_xp_grant(player, Skill::Electrics, xp);
+        Some(CombatHit {
+            damage: dmg,
+            xp_grants: vec![electrics],
+        })
     } else {
         None
     }
@@ -244,6 +301,7 @@ mod tests {
             fortitude_bonus: 0,
             tool_tag: None,
             alchemy_value: 0,
+            attack_ticks: 4,
         };
         let content = test_content(vec![item.clone()]);
         let player = test_player_with_gear(item, openmmo_common::EquipSlot::Weapon);
@@ -266,6 +324,7 @@ mod tests {
             fortitude_bonus: 0,
             tool_tag: None,
             alchemy_value: 0,
+            attack_ticks: 4,
         };
         let content = test_content(vec![item.clone()]);
         let player = test_player_with_gear(item, openmmo_common::EquipSlot::Weapon);
@@ -312,9 +371,10 @@ mod tests {
             max_hp: 20,
             prowess: 1,
             fortitude: 1000,
+            aggro_target: None,
             alive: true,
             respawn_ticks: 10,
-            aggro_target: None,
+            attack_cooldown: 0,
         };
 
         let mut misses = 0;

@@ -18,6 +18,7 @@ pub async fn network_thread(
                     url,
                     username,
                     character,
+                    password,
                 } => match connect_async(&url).await {
                     Ok((ws, _)) => {
                         info!("Connected to {url}");
@@ -27,6 +28,7 @@ pub async fn network_thread(
                         let login = ClientMessage::Login {
                             username,
                             character_name: character,
+                            password,
                         };
                         if let Some(s) = &mut ws_sink {
                             let _ = s

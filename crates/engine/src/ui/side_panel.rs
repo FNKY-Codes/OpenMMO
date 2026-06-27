@@ -20,6 +20,7 @@ pub fn draw_active_tab(
     equipment: &Equipment,
     skills: &SkillBook,
     quest_text: &[(String, String)],
+    combat_opponent: Option<openmmo_common::EntityId>,
 ) -> UiAction {
     let mut action = UiAction::None;
 
@@ -35,7 +36,7 @@ pub fn draw_active_tab(
             action = draw_bank_tab(ui, content, inventory, bank, &mut game_ui.bank_mode_deposit);
         }
         SidePanelTab::Skills => {
-            action = draw_skills_tab(ui, content, skills);
+            action = draw_skills_tab(ui, content, skills, combat_opponent);
         }
         SidePanelTab::Quests => {
             draw_quests_tab(ui, quest_text, &game_ui.ledger_contract);
@@ -225,7 +226,12 @@ fn draw_bank_tab(
     action
 }
 
-fn draw_skills_tab(ui: &mut Ui, content: &ContentPack, skills: &SkillBook) -> UiAction {
+fn draw_skills_tab(
+    ui: &mut Ui,
+    content: &ContentPack,
+    skills: &SkillBook,
+    combat_opponent: Option<openmmo_common::EntityId>,
+) -> UiAction {
     let mut action = UiAction::None;
     ui.heading("Skills");
     for skill in Skill::all() {
@@ -260,6 +266,44 @@ fn draw_skills_tab(ui: &mut Ui, content: &ContentPack, skills: &SkillBook) -> Ui
     if !any_recipe {
         ui.label("No recipes available at your level.");
     }
+
+    ui.separator();
+    ui.label(RichText::new("Electrics / Spells").strong().color(ACCENT));
+    let electrics_level = skills
+        .skills
+        .get(&Skill::Electrics)
+        .map(|p| p.level)
+        .unwrap_or(1);
+    for spell in &content.spells {
+        if electrics_level >= spell.electrics_level {
+            let label = format!("{} (Electrics {})", spell.name, spell.electrics_level);
+            if ui.button(label).clicked() {
+                if let Some(target) = combat_opponent {
+                    action = UiAction::CastSpell {
+                        target,
+                        spell_id: spell.id.clone(),
+                    };
+                } else {
+                    action = UiAction::None;
+                }
+            }
+        }
+    }
+
+    ui.separator();
+    ui.label(RichText::new("Specialization").strong().color(ACCENT));
+    for spec in &content.specializations {
+        if ui
+            .button(format!("{}: {}", spec.skill.name(), spec.branch))
+            .clicked()
+        {
+            action = UiAction::SelectSpecialization {
+                skill: spec.skill,
+                branch: spec.branch.clone(),
+            };
+        }
+    }
+
     action
 }
 

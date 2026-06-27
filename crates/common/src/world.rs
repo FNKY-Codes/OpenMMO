@@ -72,6 +72,8 @@ pub enum PlayerAction {
     Combat {
         target: EntityId,
         style: crate::CombatStyle,
+        #[serde(default)]
+        player_attack_cooldown: u32,
     },
     Casting {
         target: EntityId,
@@ -92,6 +94,8 @@ pub struct NpcState {
     pub fortitude: u32,
     pub aggro_target: Option<PlayerId>,
     pub respawn_ticks: u32,
+    #[serde(default)]
+    pub attack_cooldown: u32,
     pub alive: bool,
 }
 
@@ -192,4 +196,12 @@ pub struct BossState {
     pub fortitude: u32,
     pub phase: u32,
     pub mechanics_active: Vec<String>,
+    #[serde(default = "default_boss_attack_ticks")]
+    pub attack_ticks: u32,
+    #[serde(default)]
+    pub attack_cooldown: u32,
+}
+
+fn default_boss_attack_ticks() -> u32 {
+    5
 }

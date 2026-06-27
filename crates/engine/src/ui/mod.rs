@@ -35,10 +35,11 @@ pub struct GameUi {
     pub chat_input: String,
     pub chat_log: Vec<(String, String)>,
     pub combat_log: Vec<String>,
-    pub xp_drops: Vec<(String, u64)>,
+    pub xp_drops: Vec<(String, u64, Instant)>,
     pub connection_url: String,
     pub username: String,
     pub character_name: String,
+    pub password: String,
     pub connected: bool,
     pub status: String,
     pub active_dialogue: Option<(openmmo_common::EntityId, DialogueNode)>,
@@ -64,6 +65,7 @@ pub struct GameUi {
     pub ledger_points: u32,
     pub ledger_contract: Option<LedgerContract>,
     pub context_menu: Option<ContextMenu>,
+    pub collection_log: Vec<(String, u32)>,
 }
 
 impl Default for GameUi {
@@ -78,6 +80,7 @@ impl Default for GameUi {
             connection_url: "ws://127.0.0.1:8080/ws".to_string(),
             username: "player".to_string(),
             character_name: "Adventurer".to_string(),
+            password: String::new(),
             connected: false,
             status: "Disconnected".to_string(),
             active_dialogue: None,
@@ -103,6 +106,7 @@ impl Default for GameUi {
             ledger_points: 0,
             ledger_contract: None,
             context_menu: None,
+            collection_log: Vec::new(),
         }
     }
 }
@@ -123,6 +127,10 @@ impl GameUi {
                 ui.text_edit_singleline(&mut self.username);
                 ui.label("Character Name");
                 ui.text_edit_singleline(&mut self.character_name);
+                ui.label("Password");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.password).password(true),
+                );
                 ui.separator();
                 ui.label(&self.status);
                 if ui.button("Connect").clicked() {
@@ -143,10 +151,16 @@ impl GameUi {
         hp: u32,
         max_hp: u32,
         quest_text: &[(String, String)],
+        combat_opponent: Option<openmmo_common::EntityId>,
+        player_tile: Option<openmmo_common::TilePos>,
+        region: Option<&RegionDef>,
     ) -> UiAction {
         let mut action = UiAction::None;
 
-        for (skill, amount) in &self.xp_drops.clone() {
+        let now = Instant::now();
+        self.xp_drops.retain(|(_, _, at)| now.duration_since(*at).as_secs_f32() < 1.5);
+
+        for (skill, amount, _) in &self.xp_drops {
             egui::Area::new(egui::Id::new(format!("xp_{skill}_{amount}")))
                 .anchor(egui::Align2::CENTER_TOP, [0.0, 40.0])
                 .show(ctx, |ui| {
@@ -156,7 +170,6 @@ impl GameUi {
                     );
                 });
         }
-        self.xp_drops.clear();
 
         if self.show_minimap {
             egui::Window::new("Minimap")
@@ -167,8 +180,18 @@ impl GameUi {
                         ui.allocate_exact_size(egui::vec2(120.0, 120.0), egui::Sense::hover());
                     ui.painter()
                         .rect_filled(rect, 4.0, egui::Color32::from_rgb(20, 40, 20));
-                    ui.painter()
-                        .circle_filled(rect.center(), 4.0, theme::ACCENT);
+                    if let (Some(pos), Some(region)) = (player_tile, region) {
+                        let scale_x = rect.width() / region.width.max(1) as f32;
+                        let scale_y = rect.height() / region.height.max(1) as f32;
+                        let dot = egui::pos2(
+                            rect.left() + pos.x as f32 * scale_x,
+                            rect.top() + pos.y as f32 * scale_y,
+                        );
+                        ui.painter().circle_filled(dot, 4.0, theme::ACCENT);
+                    } else {
+                        ui.painter()
+                            .circle_filled(rect.center(), 4.0, theme::ACCENT);
+                    }
                 });
         }
 
@@ -222,6 +245,7 @@ impl GameUi {
                             equipment,
                             skills,
                             quest_text,
+                            combat_opponent,
                         );
                         if !matches!(tab_action, UiAction::None) {
                             action = tab_action;
@@ -251,6 +275,7 @@ impl GameUi {
                         if ui.button(&opt.label).clicked() {
                             action = UiAction::DialogueSelect {
                                 npc_entity,
+                                dialogue_id: node.id.clone(),
                                 option_index: idx,
                             };
                             self.active_dialogue = None;
@@ -378,7 +403,16 @@ pub enum UiAction {
     Refine { recipe_id: String },
     DialogueSelect {
         npc_entity: openmmo_common::EntityId,
+        dialogue_id: String,
         option_index: usize,
+    },
+    CastSpell {
+        target: openmmo_common::EntityId,
+        spell_id: String,
+    },
+    SelectSpecialization {
+        skill: openmmo_common::Skill,
+        branch: String,
     },
     ShopBuy {
         shop_id: String,
