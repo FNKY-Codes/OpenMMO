@@ -1,4 +1,5 @@
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::Instant;
 
 use egui_wgpu::wgpu;
 use egui_wgpu::Renderer as EguiRenderer;
@@ -10,7 +11,9 @@ use openmmo_protocol::{ClientMessage, ServerMessage};
 use egui_winit::egui;
 
 use crate::{
+    entity_bounds,
     input::InputState,
+    movement_interp::EntityMovementInterp,
     renderer::Renderer,
     ui::{build_context_menu, setup_theme, to_client_message, GameUi, UiAction},
 };
@@ -30,6 +33,7 @@ pub struct EngineApp {
     pub ui: GameUi,
     pub content: ContentPack,
     pub entities: Vec<WorldEntity>,
+    pub movement_interp: EntityMovementInterp,
     pub region: Option<RegionDef>,
     pub local_player: Option<openmmo_common::PlayerId>,
     pub inventory: openmmo_common::Inventory,
@@ -50,6 +54,7 @@ impl Default for EngineApp {
             ui: GameUi::default(),
             content: ContentPack::default(),
             entities: Vec::new(),
+            movement_interp: EntityMovementInterp::default(),
             region: None,
             local_player: None,
             inventory: openmmo_common::Inventory::new(openmmo_common::INVENTORY_SIZE),
@@ -233,6 +238,7 @@ impl EngineApp {
                 max_hp,
                 ..
             } => {
+                let now = Instant::now();
                 for entity in &mut self.entities {
                     if let EntityKind::Player {
                         player_id: pid,
@@ -243,6 +249,8 @@ impl EngineApp {
                     } = &mut entity.kind
                     {
                         if *pid == player_id {
+                            self.movement_interp
+                                .on_position_change(entity.entity_id, position, now);
                             *pos = position;
                             *ehp = hp;
                             *emhp = max_hp;
@@ -295,6 +303,7 @@ impl EngineApp {
             }
             ServerMessage::Death { entity, .. } => {
                 self.ui.combat_log.push(format!("Entity {} died", entity.0));
+                self.movement_interp.remove(entity);
                 self.entities.retain(|e| e.entity_id != entity);
             }
             ServerMessage::QuestJournal { entries } => {
@@ -363,8 +372,13 @@ impl EngineApp {
     }
 
     fn merge_entities(&mut self, entities: Vec<WorldEntity>) {
+        let now = Instant::now();
         let ids: std::collections::HashSet<_> = entities.iter().map(|e| e.entity_id).collect();
         for entity in entities {
+            if let Some(tile) = entity_bounds::entity_tile(&entity) {
+                self.movement_interp
+                    .on_position_change(entity.entity_id, tile, now);
+            }
             if let Some(existing) = self
                 .entities
                 .iter_mut()
@@ -376,6 +390,7 @@ impl EngineApp {
             }
         }
         self.entities.retain(|e| ids.contains(&e.entity_id));
+        self.movement_interp.prune(&ids);
     }
 
     fn sync_local_hp(&mut self) {
@@ -465,8 +480,21 @@ impl EngineApp {
         self.poll_network();
 
         if self.ui.connected {
-            if let Some(position) = self.local_player_position() {
-                renderer.camera_mut().center_on_tile(position);
+            if let Some(entity) = self.local_player.and_then(|lp| {
+                self.entities.iter().find(|e| {
+                    matches!(&e.kind, EntityKind::Player { player_id, .. } if *player_id == lp)
+                })
+            }) {
+                let now = Instant::now();
+                if let Some([cx, _, cz]) = self.movement_interp.visual_center(
+                    entity.entity_id,
+                    now,
+                    self.region.as_ref(),
+                ) {
+                    renderer.camera_mut().center_on_world(cx, cz);
+                } else if let Some(position) = entity_bounds::entity_tile(entity) {
+                    renderer.camera_mut().center_on_tile(position);
+                }
             }
         }
 
@@ -485,6 +513,7 @@ impl EngineApp {
             self.region.as_ref(),
             &self.entities,
             self.local_player,
+            &self.movement_interp,
         );
 
         let raw_input = egui_state.take_egui_input(window);

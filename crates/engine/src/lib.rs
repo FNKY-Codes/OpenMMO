@@ -3,6 +3,7 @@ pub mod camera;
 pub mod entity_bounds;
 pub mod input;
 pub mod math;
+pub mod movement_interp;
 pub mod renderer;
 pub mod ui;
 
