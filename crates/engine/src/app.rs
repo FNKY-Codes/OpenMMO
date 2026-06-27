@@ -48,6 +48,7 @@ pub struct EngineApp {
     pub net_tx: Option<Sender<NetCommand>>,
     pub net_rx: Option<Receiver<ServerMessage>>,
     pointer_over_ui: bool,
+    pub player_model_path: Option<std::path::PathBuf>,
 }
 
 impl Default for EngineApp {
@@ -71,7 +72,20 @@ impl Default for EngineApp {
             net_tx: None,
             net_rx: None,
             pointer_over_ui: false,
+            player_model_path: default_player_model_path(),
         }
+    }
+}
+
+fn default_player_model_path() -> Option<std::path::PathBuf> {
+    if let Ok(path) = std::env::var("OPENMMO_PLAYER_MODEL") {
+        return Some(std::path::PathBuf::from(path));
+    }
+    let default = std::path::PathBuf::from("assets/models/Pinguin_001.glb");
+    if default.exists() {
+        Some(default)
+    } else {
+        None
     }
 }
 
@@ -87,7 +101,10 @@ impl EngineApp {
                 )
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
         );
-        let mut renderer = pollster::block_on(Renderer::new(window.clone()));
+        let mut renderer = pollster::block_on(Renderer::new(
+            window.clone(),
+            self.player_model_path.as_deref(),
+        ));
         let egui_ctx = egui::Context::default();
         setup_theme(&egui_ctx);
         let mut egui_state = EguiWinitState::new(
