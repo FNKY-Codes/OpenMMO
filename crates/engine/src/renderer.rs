@@ -3,6 +3,7 @@ use egui_wgpu::wgpu;
 use openmmo_common::{RegionDef, TilePos, WorldEntity};
 
 use crate::camera::Camera;
+use crate::math::Vec3;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -24,10 +25,20 @@ pub struct GpuState {
     pub config: wgpu::SurfaceConfiguration,
 }
 
+struct EntityDraw {
+    solid_start: u32,
+    solid_len: u32,
+    outline_start: u32,
+    outline_len: u32,
+    sort_key: f32,
+    transparent: bool,
+}
+
 pub struct Renderer {
     window: std::sync::Arc<egui_winit::winit::window::Window>,
     gpu: GpuState,
     pipeline: wgpu::RenderPipeline,
+    transparent_pipeline: wgpu::RenderPipeline,
     outline_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     uniform_buffer: wgpu::Buffer,
@@ -137,7 +148,51 @@ impl Renderer {
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("World Pipeline"),
+            label: Some("Opaque World Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let transparent_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Transparent World Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -162,7 +217,7 @@ impl Renderer {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Cw,
+                front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
@@ -170,7 +225,7 @@ impl Renderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
+                depth_write_enabled: false,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
@@ -204,10 +259,10 @@ impl Renderer {
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                topology: wgpu::PrimitiveTopology::LineList,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Cw,
-                cull_mode: Some(wgpu::Face::Front),
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
@@ -215,7 +270,7 @@ impl Renderer {
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -240,6 +295,7 @@ impl Renderer {
                 config,
             },
             pipeline,
+            transparent_pipeline,
             outline_pipeline,
             vertex_buffer,
             uniform_buffer,
@@ -343,9 +399,11 @@ impl Renderer {
             bytemuck::bytes_of(&Uniforms { view_proj: vp.cols }),
         );
 
+        let eye = self.camera.eye_position();
         let mut tile_vertices = Vec::new();
-        let mut outline_vertices = Vec::new();
         let mut entity_vertices = Vec::new();
+        let mut outline_vertices = Vec::new();
+        let mut entity_draws = Vec::new();
 
         if let Some(region) = region {
             self.build_region_tiles(region, &mut tile_vertices);
@@ -362,33 +420,37 @@ impl Renderer {
             );
             if is_local {
                 local_entity = Some(entity);
-            } else {
-                self.build_entity(
-                    entity,
-                    region,
-                    &mut entity_vertices,
-                    &mut outline_vertices,
-                    local_player,
-                );
-            }
-        }
-        if let Some(entity) = local_entity {
-            self.build_entity(
+            } else if let Some(draw) = self.build_entity(
                 entity,
                 region,
+                eye,
                 &mut entity_vertices,
                 &mut outline_vertices,
                 local_player,
-            );
+            ) {
+                entity_draws.push(draw);
+            }
+        }
+        if let Some(entity) = local_entity {
+            if let Some(draw) = self.build_entity(
+                entity,
+                region,
+                eye,
+                &mut entity_vertices,
+                &mut outline_vertices,
+                local_player,
+            ) {
+                entity_draws.push(draw);
+            }
         }
 
         let tile_count = tile_vertices.len() as u32;
-        let outline_count = outline_vertices.len() as u32;
-        let entity_count = entity_vertices.len() as u32;
+        let solid_base = tile_count;
+        let outline_base = solid_base + entity_vertices.len() as u32;
         let vertices: Vec<Vertex> = tile_vertices
             .iter()
-            .chain(outline_vertices.iter())
             .chain(entity_vertices.iter())
+            .chain(outline_vertices.iter())
             .copied()
             .collect();
 
@@ -432,21 +494,68 @@ impl Renderer {
             render_pass.draw(0..tile_count, 0..1);
         }
 
-        if outline_count > 0 {
-            render_pass.set_pipeline(&self.outline_pipeline);
-            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(tile_count..tile_count + outline_count, 0..1);
-        }
+        entity_draws.sort_by(|a, b| {
+            b.sort_key
+                .partial_cmp(&a.sort_key)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-        if entity_count > 0 {
-            render_pass.set_pipeline(&self.pipeline);
-            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(
-                tile_count + outline_count..tile_count + outline_count + entity_count,
-                0..1,
-            );
+        Self::draw_entities(
+            &mut render_pass,
+            &self.pipeline,
+            &self.outline_pipeline,
+            &self.vertex_buffer,
+            &self.uniform_bind_group,
+            &entity_draws,
+            solid_base,
+            outline_base,
+            false,
+        );
+
+        Self::draw_entities(
+            &mut render_pass,
+            &self.transparent_pipeline,
+            &self.outline_pipeline,
+            &self.vertex_buffer,
+            &self.uniform_bind_group,
+            &entity_draws,
+            solid_base,
+            outline_base,
+            true,
+        );
+    }
+
+    fn draw_entities<'a>(
+        render_pass: &mut wgpu::RenderPass<'a>,
+        solid_pipeline: &'a wgpu::RenderPipeline,
+        outline_pipeline: &'a wgpu::RenderPipeline,
+        vertex_buffer: &'a wgpu::Buffer,
+        uniform_bind_group: &'a wgpu::BindGroup,
+        entity_draws: &[EntityDraw],
+        solid_base: u32,
+        outline_base: u32,
+        transparent: bool,
+    ) {
+        for draw in entity_draws.iter().filter(|d| d.transparent == transparent) {
+            if draw.solid_len > 0 {
+                render_pass.set_pipeline(solid_pipeline);
+                render_pass.set_bind_group(0, uniform_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                render_pass.draw(
+                    solid_base + draw.solid_start..solid_base + draw.solid_start + draw.solid_len,
+                    0..1,
+                );
+            }
+            if draw.outline_len > 0 {
+                render_pass.set_pipeline(outline_pipeline);
+                render_pass.set_bind_group(0, uniform_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                render_pass.draw(
+                    outline_base + draw.outline_start
+                        ..outline_base + draw.outline_start + draw.outline_len,
+                    0..1,
+                );
+            }
         }
     }
 
@@ -488,10 +597,11 @@ impl Renderer {
         &self,
         entity: &WorldEntity,
         region: Option<&RegionDef>,
+        eye: Vec3,
         entity_vertices: &mut Vec<Vertex>,
         outline_vertices: &mut Vec<Vertex>,
         local_player: Option<openmmo_common::PlayerId>,
-    ) {
+    ) -> Option<EntityDraw> {
         match &entity.kind {
             openmmo_common::EntityKind::Player {
                 player_id,
@@ -503,15 +613,16 @@ impl Renderer {
                 } else {
                     [0.9, 0.8, 0.2, 1.0]
                 };
-                self.add_entity_cube(
+                Some(self.add_entity_cube(
                     *position,
                     region,
+                    eye,
                     0.9,
                     1.8,
                     color,
                     entity_vertices,
                     outline_vertices,
-                );
+                ))
             }
             openmmo_common::EntityKind::Npc { position, hp, .. } => {
                 let color = if *hp > 0 {
@@ -519,15 +630,16 @@ impl Renderer {
                 } else {
                     [0.4, 0.4, 0.4, 0.6]
                 };
-                self.add_entity_cube(
+                Some(self.add_entity_cube(
                     *position,
                     region,
+                    eye,
                     0.8,
                     1.6,
                     color,
                     entity_vertices,
                     outline_vertices,
-                );
+                ))
             }
             openmmo_common::EntityKind::Boss { position, hp, .. } => {
                 let color = if *hp > 0 {
@@ -535,38 +647,37 @@ impl Renderer {
                 } else {
                     [0.3, 0.3, 0.3, 0.6]
                 };
-                self.add_entity_cube(
+                Some(self.add_entity_cube(
                     *position,
                     region,
+                    eye,
                     1.4,
                     3.0,
                     color,
                     entity_vertices,
                     outline_vertices,
-                );
+                ))
             }
-            openmmo_common::EntityKind::Object { position, .. } => {
-                self.add_entity_cube(
-                    *position,
-                    region,
-                    0.7,
-                    1.2,
-                    [0.5, 0.3, 0.15, 1.0],
-                    entity_vertices,
-                    outline_vertices,
-                );
-            }
-            openmmo_common::EntityKind::GroundItem { position, .. } => {
-                self.add_entity_cube(
-                    *position,
-                    region,
-                    0.35,
-                    0.35,
-                    [1.0, 0.85, 0.0, 1.0],
-                    entity_vertices,
-                    outline_vertices,
-                );
-            }
+            openmmo_common::EntityKind::Object { position, .. } => Some(self.add_entity_cube(
+                *position,
+                region,
+                eye,
+                0.7,
+                1.2,
+                [0.5, 0.3, 0.15, 1.0],
+                entity_vertices,
+                outline_vertices,
+            )),
+            openmmo_common::EntityKind::GroundItem { position, .. } => Some(self.add_entity_cube(
+                *position,
+                region,
+                eye,
+                0.35,
+                0.35,
+                [1.0, 0.85, 0.0, 1.0],
+                entity_vertices,
+                outline_vertices,
+            )),
         }
     }
 
@@ -627,19 +738,39 @@ impl Renderer {
         &self,
         tile: TilePos,
         region: Option<&RegionDef>,
+        eye: Vec3,
         width: f32,
         height: f32,
         color: [f32; 4],
         entity_vertices: &mut Vec<Vertex>,
         outline_vertices: &mut Vec<Vertex>,
-    ) {
+    ) -> EntityDraw {
         let [cx, _, cz] = Self::tile_center(tile);
         let surface_y = Self::tile_surface_height(tile, region);
         let center = [cx, surface_y + height * 0.5, cz];
         let size = [width, height, width];
 
-        add_outline_shell(center, size, [0.0, 0.0, 0.0, 1.0], outline_vertices);
+        let dx = center[0] - eye.x;
+        let dy = center[1] - eye.y;
+        let dz = center[2] - eye.z;
+        let sort_key = dx * dx + dy * dy + dz * dz;
+
+        let solid_start = entity_vertices.len() as u32;
         add_box(center, size, color, entity_vertices, true);
+        let solid_len = entity_vertices.len() as u32 - solid_start;
+
+        let outline_start = outline_vertices.len() as u32;
+        add_box_edge_lines(center, size, [0.0, 0.0, 0.0, 1.0], outline_vertices, true);
+        let outline_len = outline_vertices.len() as u32 - outline_start;
+
+        EntityDraw {
+            solid_start,
+            solid_len,
+            outline_start,
+            outline_len,
+            sort_key,
+            transparent: color[3] < 1.0,
+        }
     }
 }
 
@@ -667,6 +798,7 @@ fn add_box(
         [cx - hx, cy + hy, cz + hz],
     ];
 
+    // Outward-facing CCW winding when viewed from outside along each normal.
     let faces: [([usize; 4], [f32; 3]); 6] = [
         ([0, 3, 2, 1], [0.0, 0.0, -1.0]),
         ([5, 6, 7, 4], [0.0, 0.0, 1.0]),
@@ -693,25 +825,66 @@ fn add_box(
     }
 }
 
-const OUTLINE_SCALE: f32 = 1.06;
-
-fn add_outline_shell(
+fn add_box_edge_lines(
     center: [f32; 3],
     size: [f32; 3],
     color: [f32; 4],
     vertices: &mut Vec<Vertex>,
+    skip_bottom: bool,
 ) {
-    add_box(
-        center,
-        [
-            size[0] * OUTLINE_SCALE,
-            size[1] * OUTLINE_SCALE,
-            size[2] * OUTLINE_SCALE,
-        ],
-        color,
-        vertices,
-        true,
-    );
+    let [cx, cy, cz] = center;
+    let [sx, sy, sz] = size;
+    let hx = sx * 0.5;
+    let hy = sy * 0.5;
+    let hz = sz * 0.5;
+
+    let corners = [
+        [cx - hx, cy - hy, cz - hz],
+        [cx + hx, cy - hy, cz - hz],
+        [cx + hx, cy + hy, cz - hz],
+        [cx - hx, cy + hy, cz - hz],
+        [cx - hx, cy - hy, cz + hz],
+        [cx + hx, cy - hy, cz + hz],
+        [cx + hx, cy + hy, cz + hz],
+        [cx - hx, cy + hy, cz + hz],
+    ];
+
+    let edges: &[[usize; 2]] = if skip_bottom {
+        &[
+            [3, 2],
+            [2, 6],
+            [6, 7],
+            [7, 3],
+            [0, 3],
+            [1, 2],
+            [5, 6],
+            [4, 7],
+        ]
+    } else {
+        &[
+            [0, 1],
+            [1, 5],
+            [5, 4],
+            [4, 0],
+            [3, 2],
+            [2, 6],
+            [6, 7],
+            [7, 3],
+            [0, 3],
+            [1, 2],
+            [5, 6],
+            [4, 7],
+        ]
+    };
+
+    for &[a, b] in edges {
+        push_line(corners[a], corners[b], color, vertices);
+    }
+}
+
+fn push_line(a: [f32; 3], b: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
+    vertices.push(Vertex { position: a, color });
+    vertices.push(Vertex { position: b, color });
 }
 
 fn push_tri(a: [f32; 3], b: [f32; 3], c: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
