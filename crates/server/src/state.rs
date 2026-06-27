@@ -111,6 +111,7 @@ impl GameWorld {
                 npc_id,
                 name: def.name.clone(),
                 position,
+                home_position: position,
                 hp: def.max_hp,
                 max_hp: def.max_hp,
                 prowess: def.prowess,
