@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
 use openmmo_common::{RegionDef, TilePos, WorldEntity};
@@ -5,6 +7,7 @@ use openmmo_common::{RegionDef, TilePos, WorldEntity};
 use crate::camera::Camera;
 use crate::entity_bounds;
 use crate::math::Vec3;
+use crate::movement_interp::EntityMovementInterp;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -416,6 +419,7 @@ impl Renderer {
         region: Option<&RegionDef>,
         entities: &[WorldEntity],
         local_player: Option<openmmo_common::PlayerId>,
+        movement_interp: &EntityMovementInterp,
     ) {
         let vp = self
             .camera
@@ -466,6 +470,7 @@ impl Renderer {
         transparent_outline_vertices.clear();
         transparent_draws.clear();
 
+        let now = Instant::now();
         let mut local_entity = None;
         for entity in entities {
             let is_local = matches!(
@@ -480,6 +485,8 @@ impl Renderer {
                     entity,
                     region,
                     eye,
+                    now,
+                    movement_interp,
                     &mut opaque_entity_vertices,
                     &mut opaque_outline_vertices,
                     &mut transparent_entity_vertices,
@@ -494,6 +501,8 @@ impl Renderer {
                 entity,
                 region,
                 eye,
+                now,
+                movement_interp,
                 &mut opaque_entity_vertices,
                 &mut opaque_outline_vertices,
                 &mut transparent_entity_vertices,
@@ -648,6 +657,8 @@ impl Renderer {
         entity: &WorldEntity,
         region: Option<&RegionDef>,
         eye: Vec3,
+        now: Instant,
+        movement_interp: &EntityMovementInterp,
         opaque_entity_vertices: &mut Vec<Vertex>,
         opaque_outline_vertices: &mut Vec<Vertex>,
         transparent_entity_vertices: &mut Vec<Vertex>,
@@ -655,12 +666,24 @@ impl Renderer {
         transparent_draws: &mut Vec<TransparentDraw>,
         local_player: Option<openmmo_common::PlayerId>,
     ) {
+        let visual_base = movement_interp
+            .visual_center(entity.entity_id, now, region)
+            .or_else(|| {
+                entity_bounds::entity_tile(entity).map(|tile| {
+                    let [cx, _, cz] = Self::tile_center(tile);
+                    let surface_y = Self::tile_surface_height(tile, region);
+                    [cx, surface_y, cz]
+                })
+            });
+
         match &entity.kind {
             openmmo_common::EntityKind::Player {
                 player_id,
-                position,
                 ..
             } => {
+                let Some([cx, surface_y, cz]) = visual_base else {
+                    return;
+                };
                 let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 let color = if Some(*player_id) == local_player {
                     [0.2, 0.6, 1.0, 1.0]
@@ -668,8 +691,7 @@ impl Renderer {
                     [0.9, 0.8, 0.2, 1.0]
                 };
                 self.add_entity_cube(
-                    *position,
-                    region,
+                    [cx, surface_y, cz],
                     eye,
                     width,
                     height,
@@ -681,7 +703,10 @@ impl Renderer {
                     transparent_draws,
                 );
             }
-            openmmo_common::EntityKind::Npc { position, hp, .. } => {
+            openmmo_common::EntityKind::Npc { hp, .. } => {
+                let Some([cx, surface_y, cz]) = visual_base else {
+                    return;
+                };
                 let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 let color = if *hp > 0 {
                     [0.85, 0.2, 0.2, 1.0]
@@ -689,8 +714,7 @@ impl Renderer {
                     [0.4, 0.4, 0.4, 0.6]
                 };
                 self.add_entity_cube(
-                    *position,
-                    region,
+                    [cx, surface_y, cz],
                     eye,
                     width,
                     height,
@@ -702,7 +726,10 @@ impl Renderer {
                     transparent_draws,
                 );
             }
-            openmmo_common::EntityKind::Boss { position, hp, .. } => {
+            openmmo_common::EntityKind::Boss { hp, .. } => {
+                let Some([cx, surface_y, cz]) = visual_base else {
+                    return;
+                };
                 let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 let color = if *hp > 0 {
                     [0.6, 0.1, 0.8, 1.0]
@@ -710,8 +737,7 @@ impl Renderer {
                     [0.3, 0.3, 0.3, 0.6]
                 };
                 self.add_entity_cube(
-                    *position,
-                    region,
+                    [cx, surface_y, cz],
                     eye,
                     width,
                     height,
@@ -723,11 +749,13 @@ impl Renderer {
                     transparent_draws,
                 );
             }
-            openmmo_common::EntityKind::Object { position, .. } => {
+            openmmo_common::EntityKind::Object { .. } => {
+                let Some([cx, surface_y, cz]) = visual_base else {
+                    return;
+                };
                 let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 self.add_entity_cube(
-                    *position,
-                    region,
+                    [cx, surface_y, cz],
                     eye,
                     width,
                     height,
@@ -739,11 +767,13 @@ impl Renderer {
                     transparent_draws,
                 );
             }
-            openmmo_common::EntityKind::GroundItem { position, .. } => {
+            openmmo_common::EntityKind::GroundItem { .. } => {
+                let Some([cx, surface_y, cz]) = visual_base else {
+                    return;
+                };
                 let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 self.add_entity_cube(
-                    *position,
-                    region,
+                    [cx, surface_y, cz],
                     eye,
                     width,
                     height,
@@ -785,8 +815,7 @@ impl Renderer {
 
     fn add_entity_cube(
         &self,
-        tile: TilePos,
-        region: Option<&RegionDef>,
+        base: [f32; 3],
         eye: Vec3,
         width: f32,
         height: f32,
@@ -797,8 +826,7 @@ impl Renderer {
         transparent_outline_vertices: &mut Vec<Vertex>,
         transparent_draws: &mut Vec<TransparentDraw>,
     ) {
-        let [cx, _, cz] = Self::tile_center(tile);
-        let surface_y = Self::tile_surface_height(tile, region);
+        let [cx, surface_y, cz] = base;
         let center = [cx, surface_y + height * 0.5, cz];
         let size = [width, height, width];
         let transparent = color[3] < 1.0;

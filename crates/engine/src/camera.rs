@@ -37,6 +37,12 @@ impl Camera {
         self.target_y = 0.9;
     }
 
+    pub fn center_on_world(&mut self, x: f32, z: f32) {
+        self.target_x = x;
+        self.target_z = z;
+        self.target_y = 0.9;
+    }
+
     pub fn rotate(&mut self, dyaw: f32, dpitch: f32) {
         self.yaw += dyaw;
         self.pitch = (self.pitch + dpitch).clamp(0.15, 1.35);
