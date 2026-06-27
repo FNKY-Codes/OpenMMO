@@ -13,6 +13,7 @@ use egui_winit::egui;
 use crate::{
     entity_bounds,
     input::InputState,
+    model::resolve_player_model_path,
     movement_interp::EntityMovementInterp,
     renderer::{HoverTarget, Renderer},
     ui::{build_context_menu, draw_combat_health_bars, setup_theme, to_client_message, GameUi, UiAction},
@@ -72,20 +73,8 @@ impl Default for EngineApp {
             net_tx: None,
             net_rx: None,
             pointer_over_ui: false,
-            player_model_path: default_player_model_path(),
+            player_model_path: resolve_player_model_path(),
         }
-    }
-}
-
-fn default_player_model_path() -> Option<std::path::PathBuf> {
-    if let Ok(path) = std::env::var("OPENMMO_PLAYER_MODEL") {
-        return Some(std::path::PathBuf::from(path));
-    }
-    let default = std::path::PathBuf::from("assets/models/Pinguin_001.glb");
-    if default.exists() {
-        Some(default)
-    } else {
-        None
     }
 }
 

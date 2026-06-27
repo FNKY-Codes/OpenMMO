@@ -320,10 +320,15 @@ impl Renderer {
         let player_model = player_model_path.and_then(|path| {
             match load_player_model(&device, &queue, format, path) {
                 Ok(model) => {
+                    eprintln!("OpenMMO: loaded player model from {}", path.display());
                     tracing::info!(?path, "loaded player model");
                     Some(model)
                 }
                 Err(err) => {
+                    eprintln!(
+                        "OpenMMO: failed to load player model from {}: {err}",
+                        path.display()
+                    );
                     tracing::warn!(?path, %err, "failed to load player model");
                     None
                 }
