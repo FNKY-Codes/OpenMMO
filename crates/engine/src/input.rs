@@ -22,6 +22,7 @@ impl InputState {
         height: u32,
         entities: &[openmmo_common::WorldEntity],
         region: Option<&openmmo_common::RegionDef>,
+        local_player: Option<openmmo_common::PlayerId>,
     ) -> Option<openmmo_common::EntityId> {
         camera.pick_entity(
             self.mouse_x,
@@ -30,6 +31,7 @@ impl InputState {
             height,
             entities,
             region,
+            local_player,
         )
     }
 

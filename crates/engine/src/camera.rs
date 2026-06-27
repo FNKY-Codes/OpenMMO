@@ -109,6 +109,7 @@ impl Camera {
         height: u32,
         entities: &[openmmo_common::WorldEntity],
         region: Option<&openmmo_common::RegionDef>,
+        local_player: Option<openmmo_common::PlayerId>,
     ) -> Option<openmmo_common::EntityId> {
         let inv_vp = self.inverse_view_projection(width, height);
         let (origin, dir) = math::screen_to_world_ray(
@@ -118,21 +119,71 @@ impl Camera {
             height.max(1) as f32,
             inv_vp,
         );
-        let mut best: Option<(openmmo_common::EntityId, f32)> = None;
+
+        let mut best_mesh: Option<(openmmo_common::EntityId, f32)> = None;
         for entity in entities {
+            if is_local_player(entity, local_player) {
+                continue;
+            }
             let (center, half) = entity_bounds::entity_aabb(entity, region)?;
-            let t = math::ray_aabb_intersection(origin, dir, center, half)?;
-            if best.is_none() || t < best.unwrap().1 {
-                best = Some((entity.entity_id, t));
+            let Some(t) = math::ray_aabb_intersection(origin, dir, center, half) else {
+                continue;
+            };
+            if best_mesh.is_none() || t < best_mesh.unwrap().1 {
+                best_mesh = Some((entity.entity_id, t));
             }
         }
-        best.map(|(id, _)| id)
+        if let Some((id, _)) = best_mesh {
+            return Some(id);
+        }
+
+        pick_entity_on_tile(origin, dir, entities, local_player)
     }
+}
+
+fn is_local_player(
+    entity: &openmmo_common::WorldEntity,
+    local_player: Option<openmmo_common::PlayerId>,
+) -> bool {
+    use openmmo_common::EntityKind;
+    match (&entity.kind, local_player) {
+        (EntityKind::Player { player_id, .. }, Some(local)) => *player_id == local,
+        _ => false,
+    }
+}
+
+fn pick_entity_on_tile(
+    origin: Vec3,
+    dir: Vec3,
+    entities: &[openmmo_common::WorldEntity],
+    local_player: Option<openmmo_common::PlayerId>,
+) -> Option<openmmo_common::EntityId> {
+    let hit = math::ray_plane_y_intersection(origin, dir)?;
+    let hit_tile = TilePos::new(hit.x.floor() as i32, hit.z.floor() as i32);
+    let mut best: Option<(openmmo_common::EntityId, f32)> = None;
+    for entity in entities {
+        if is_local_player(entity, local_player) {
+            continue;
+        }
+        let pos = entity_bounds::entity_tile(entity)?;
+        if pos != hit_tile {
+            continue;
+        }
+        let cx = pos.x as f32 + 0.5;
+        let cz = pos.y as f32 + 0.5;
+        let dx = hit.x - cx;
+        let dz = hit.z - cz;
+        let dist = (dx * dx + dz * dz).sqrt();
+        if best.is_none() || dist < best.unwrap().1 {
+            best = Some((entity.entity_id, dist));
+        }
+    }
+    best.map(|(id, _)| id)
 }
 
 #[cfg(test)]
 mod tests {
-    use openmmo_common::{EntityId, EntityKind, TilePos, WorldEntity};
+    use openmmo_common::{EntityId, EntityKind, PlayerId, TilePos, WorldEntity};
 
     use super::Camera;
 
@@ -142,6 +193,19 @@ mod tests {
             kind: EntityKind::Object {
                 object_id: openmmo_common::ObjectId(1),
                 position: tile,
+            },
+        }
+    }
+
+    fn local_player_at(tile: TilePos, player_id: PlayerId) -> WorldEntity {
+        WorldEntity {
+            entity_id: EntityId(2),
+            kind: EntityKind::Player {
+                player_id,
+                name: "Hero".into(),
+                position: tile,
+                hp: 10,
+                max_hp: 10,
             },
         }
     }
@@ -187,7 +251,7 @@ mod tests {
                 }
 
                 let picked = camera
-                    .pick_entity(x as f32, y as f32, width, height, &entities, None)
+                    .pick_entity(x as f32, y as f32, width, height, &entities, None, None)
                     .expect("object should be picked from its mesh");
                 assert_eq!(picked, EntityId(1));
                 found = true;
@@ -198,5 +262,87 @@ mod tests {
             found,
             "expected a screen point that hits the object mesh but projects to a different ground tile"
         );
+    }
+
+    #[test]
+    fn pick_entity_ignores_local_player_blocking_object() {
+        let camera = Camera::new();
+        let player_tile = TilePos::new(32, 32);
+        let object_tile = TilePos::new(33, 32);
+        let local_id = PlayerId::new();
+        let entities = vec![local_player_at(player_tile, local_id), object_at(object_tile)];
+        let width = 1280;
+        let height = 720;
+
+        let mut found = false;
+        'search: for y in (0..height).step_by(8) {
+            for x in (0..width).step_by(8) {
+                let picked = camera.pick_entity(
+                    x as f32,
+                    y as f32,
+                    width,
+                    height,
+                    &entities,
+                    None,
+                    Some(local_id),
+                );
+                if picked == Some(EntityId(1)) {
+                    found = true;
+                    break 'search;
+                }
+            }
+        }
+        assert!(
+            found,
+            "object should be pickable even when local player is in the scene"
+        );
+    }
+
+    #[test]
+    fn pick_entity_falls_back_to_tile_under_cursor() {
+        let camera = Camera {
+            target_x: 10.5,
+            target_y: 0.9,
+            target_z: 10.5,
+            yaw: 0.7,
+            pitch: 0.55,
+            distance: 12.0,
+        };
+        let object_tile = TilePos::new(10, 10);
+        let entities = vec![object_at(object_tile)];
+        let width = 800;
+        let height = 600;
+
+        let mut found = false;
+        'search: for y in (0..height).step_by(8) {
+            for x in (0..width).step_by(8) {
+                let inv_vp = camera.inverse_view_projection(width, height);
+                let (origin, dir) = crate::math::screen_to_world_ray(
+                    x as f32,
+                    y as f32,
+                    width as f32,
+                    height as f32,
+                    inv_vp,
+                );
+                let ground_hit = crate::math::ray_plane_y_intersection(origin, dir).unwrap();
+                let ground_tile =
+                    TilePos::new(ground_hit.x.floor() as i32, ground_hit.z.floor() as i32);
+                if ground_tile != object_tile {
+                    continue;
+                }
+                let (center, half) = crate::entity_bounds::entity_aabb(&entities[0], None).unwrap();
+                if crate::math::ray_aabb_intersection(origin, dir, center, half).is_some() {
+                    continue;
+                }
+
+                let picked = camera
+                    .pick_entity(x as f32, y as f32, width, height, &entities, None, None)
+                    .expect("tile fallback should pick object on clicked tile");
+                assert_eq!(picked, EntityId(1));
+                found = true;
+                break 'search;
+            }
+        }
+        assert!(found, "expected a tile click that misses mesh but hits object tile");
     }
 }
