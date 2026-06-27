@@ -214,14 +214,10 @@ impl Renderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: -2,
-                    slope_scale: -1.0,
-                    clamp: 0.0,
-                },
+                bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
@@ -672,9 +668,9 @@ fn add_box(
     ];
 
     let faces: [([usize; 4], [f32; 3]); 6] = [
-        ([0, 1, 2, 3], [0.0, 0.0, -1.0]),
-        ([5, 4, 7, 6], [0.0, 0.0, 1.0]),
-        ([4, 0, 3, 7], [-1.0, 0.0, 0.0]),
+        ([0, 3, 2, 1], [0.0, 0.0, -1.0]),
+        ([5, 6, 7, 4], [0.0, 0.0, 1.0]),
+        ([4, 7, 3, 0], [-1.0, 0.0, 0.0]),
         ([1, 5, 6, 2], [1.0, 0.0, 0.0]),
         ([3, 2, 6, 7], [0.0, 1.0, 0.0]),
         ([4, 5, 1, 0], [0.0, -1.0, 0.0]),
@@ -698,6 +694,7 @@ fn add_box(
 }
 
 const OUTLINE_THICKNESS: f32 = 0.04;
+const OUTLINE_EXPAND: f32 = 1.015;
 
 fn add_box_edges(
     center: [f32; 3],
@@ -713,14 +710,14 @@ fn add_box_edges(
     let hz = sz * 0.5;
 
     let corners = [
-        [cx - hx, cy - hy, cz - hz],
-        [cx + hx, cy - hy, cz - hz],
-        [cx + hx, cy + hy, cz - hz],
-        [cx - hx, cy + hy, cz - hz],
-        [cx - hx, cy - hy, cz + hz],
-        [cx + hx, cy - hy, cz + hz],
-        [cx + hx, cy + hy, cz + hz],
-        [cx - hx, cy + hy, cz + hz],
+        expand_corner([cx - hx, cy - hy, cz - hz], center),
+        expand_corner([cx + hx, cy - hy, cz - hz], center),
+        expand_corner([cx + hx, cy + hy, cz - hz], center),
+        expand_corner([cx - hx, cy + hy, cz - hz], center),
+        expand_corner([cx - hx, cy - hy, cz + hz], center),
+        expand_corner([cx + hx, cy - hy, cz + hz], center),
+        expand_corner([cx + hx, cy + hy, cz + hz], center),
+        expand_corner([cx - hx, cy + hy, cz + hz], center),
     ];
 
     let edges: &[[usize; 2]] = if skip_bottom {
@@ -797,6 +794,14 @@ fn push_thick_edge(
     ];
     let size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
     add_box(center, size, color, vertices, false);
+}
+
+fn expand_corner(corner: [f32; 3], center: [f32; 3]) -> [f32; 3] {
+    [
+        center[0] + (corner[0] - center[0]) * OUTLINE_EXPAND,
+        center[1] + (corner[1] - center[1]) * OUTLINE_EXPAND,
+        center[2] + (corner[2] - center[2]) * OUTLINE_EXPAND,
+    ]
 }
 
 fn push_tri(a: [f32; 3], b: [f32; 3], c: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
