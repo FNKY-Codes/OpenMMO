@@ -39,3 +39,6 @@ jobs:
 
       - name: Content validator
         run: cargo run -p openmmo-content-validator -- content
+
+      - name: Region linter
+        run: cargo run -p openmmo-region-linter -- content

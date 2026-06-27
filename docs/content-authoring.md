@@ -10,9 +10,14 @@ Content lives in `content/` as YAML files organized by type:
 
 ```bash
 cargo run -p openmmo-content-validator -- content
+cargo run -p openmmo-region-linter -- content
 ```
 
-Checks for orphan item IDs, broken quest references, and missing recipe outputs.
+Checks for orphan item IDs, broken quest references, missing recipe outputs, and region geometry (tile dimensions, spawn bounds).
+
+## Third-party content packs
+
+To ship your own MMO as a separate repository, see [Content pack layout](content-pack.md) for the `openmmo.toml` manifest and directory structure. Use [`templates/openmmo-game-template/`](../templates/openmmo-game-template/) as a starting point.
 
 ## Adding a Quest
 

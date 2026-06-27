@@ -1,10 +1,10 @@
 [package]
-name = "openmmo-content-validator"
+name = "openmmo-region-linter"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "content-validator"
+name = "region-linter"
 path = "src/main.rs"
 
 [dependencies]

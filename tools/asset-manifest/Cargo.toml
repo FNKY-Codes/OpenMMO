@@ -1,12 +1,13 @@
 [package]
-name = "openmmo-content-validator"
+name = "openmmo-asset-manifest"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "content-validator"
+name = "asset-manifest"
 path = "src/main.rs"
 
 [dependencies]
 openmmo-sdk = { workspace = true }
+serde_json = { workspace = true }
 anyhow = { workspace = true }

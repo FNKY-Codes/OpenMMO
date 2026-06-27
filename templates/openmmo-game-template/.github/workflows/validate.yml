@@ -1,0 +1,37 @@
+name: Validate Content Pack
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout OpenMMO engine
+        uses: actions/checkout@v4
+        with:
+          repository: fnky-codes/openmmo
+          path: openmmo
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: openmmo
+
+      - name: Build validation tools
+        working-directory: openmmo
+        run: cargo build -p openmmo-content-validator -p openmmo-region-linter
+
+      - name: Validate content references
+        working-directory: openmmo
+        run: cargo run -p openmmo-content-validator -- ${{ github.workspace }}
+
+      - name: Lint regions
+        working-directory: openmmo
+        run: cargo run -p openmmo-region-linter -- ${{ github.workspace }}

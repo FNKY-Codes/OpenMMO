@@ -1,0 +1,13 @@
+[package]
+name = "openmmo-editor"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Visual authoring tools for OpenMMO content packs"
+publish = false
+
+[dependencies]
+openmmo-sdk = "0.1"
+anyhow = "1"
+eframe = "0.30"
+egui = "0.30"
