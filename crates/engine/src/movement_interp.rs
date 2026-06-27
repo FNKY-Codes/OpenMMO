@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use openmmo_common::{EntityId, RegionDef, TilePos, TICK_MS};
+use openmmo_common::{EntityId, NpcFootprint, RegionDef, TilePos, TICK_MS};
 
 use crate::entity_bounds;
 
@@ -93,17 +93,18 @@ impl EntityMovementInterp {
         id: EntityId,
         now: Instant,
         region: Option<&RegionDef>,
+        footprint: Option<NpcFootprint>,
     ) -> Option<[f32; 3]> {
         let entry = self.entries.get(&id)?;
         let t = progress(entry.started_at, now);
-        let (from_x, from_z) = tile_world_xz(entry.from);
-        let (to_x, to_z) = tile_world_xz(entry.to);
-        let cx = lerp_f32(from_x, to_x, t);
-        let cz = lerp_f32(from_z, to_z, t);
-        let from_y = entity_bounds::tile_surface_height(entry.from, region);
-        let to_y = entity_bounds::tile_surface_height(entry.to, region);
-        let surface_y = lerp_f32(from_y, to_y, t);
-        Some([cx, surface_y, cz])
+        let fp = footprint.unwrap_or_default();
+        let from_center = footprint_world_center(entry.from, region, fp);
+        let to_center = footprint_world_center(entry.to, region, fp);
+        Some([
+            lerp_f32(from_center[0], to_center[0], t),
+            lerp_f32(from_center[1], to_center[1], t),
+            lerp_f32(from_center[2], to_center[2], t),
+        ])
     }
 
     pub fn visual_facing_yaw(&self, id: EntityId, now: Instant) -> Option<f32> {
@@ -114,6 +115,15 @@ impl EntityMovementInterp {
             Some(entry.facing_yaw)
         }
     }
+}
+
+fn footprint_world_center(
+    tile: TilePos,
+    region: Option<&RegionDef>,
+    footprint: NpcFootprint,
+) -> [f32; 3] {
+    let surface_y = entity_bounds::tile_surface_height(tile, region);
+    footprint.world_center(tile, surface_y)
 }
 
 #[cfg(test)]
@@ -132,7 +142,7 @@ mod tests {
         let pos = TilePos::new(3, 4);
         interp.on_position_change(id, pos, now());
 
-        let center = interp.visual_center(id, now(), None).unwrap();
+        let center = interp.visual_center(id, now(), None, None).unwrap();
         assert!((center[0] - 3.5).abs() < f32::EPSILON);
         assert!((center[2] - 4.5).abs() < f32::EPSILON);
     }
@@ -146,7 +156,7 @@ mod tests {
         interp.on_position_change(id, TilePos::new(1, 0), start);
 
         let mid = start + Duration::from_millis(TICK_MS / 2);
-        let center = interp.visual_center(id, mid, None).unwrap();
+        let center = interp.visual_center(id, mid, None, None).unwrap();
         assert!((center[0] - 1.0).abs() < 0.01);
         assert!((center[2] - 0.5).abs() < 0.01);
     }
@@ -160,7 +170,7 @@ mod tests {
         interp.on_position_change(id, TilePos::new(5, 5), start);
 
         let mid = start + Duration::from_millis(TICK_MS / 2);
-        let center = interp.visual_center(id, mid, None).unwrap();
+        let center = interp.visual_center(id, mid, None, None).unwrap();
         assert!((center[0] - 5.5).abs() < f32::EPSILON);
         assert!((center[2] - 5.5).abs() < f32::EPSILON);
     }
@@ -186,7 +196,7 @@ mod tests {
         interp.on_position_change(id, TilePos::new(1, 0), start);
 
         let late = start + Duration::from_millis(TICK_MS * 2);
-        let center = interp.visual_center(id, late, None).unwrap();
+        let center = interp.visual_center(id, late, None, None).unwrap();
         assert!((center[0] - 1.5).abs() < f32::EPSILON);
     }
 }

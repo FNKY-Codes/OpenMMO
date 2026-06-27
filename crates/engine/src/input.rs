@@ -1,4 +1,5 @@
 use openmmo_common::TilePos;
+use openmmo_common::ContentPack;
 
 use crate::camera::Camera;
 
@@ -23,6 +24,7 @@ impl InputState {
         entities: &[openmmo_common::WorldEntity],
         region: Option<&openmmo_common::RegionDef>,
         local_player: Option<openmmo_common::PlayerId>,
+        content: &ContentPack,
     ) -> Option<openmmo_common::EntityId> {
         camera.pick_entity(
             self.mouse_x,
@@ -32,6 +34,7 @@ impl InputState {
             entities,
             region,
             local_player,
+            content,
         )
     }
 

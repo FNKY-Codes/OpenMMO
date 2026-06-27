@@ -93,7 +93,15 @@ pub struct NpcDef {
     pub respawn_ticks: u32,
     #[serde(default = "default_attack_ticks")]
     pub attack_ticks: u32,
+    #[serde(default = "default_footprint_one")]
+    pub footprint_w: u32,
+    #[serde(default = "default_footprint_one")]
+    pub footprint_h: u32,
     pub loot_table: Vec<LootEntry>,
+}
+
+fn default_footprint_one() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
