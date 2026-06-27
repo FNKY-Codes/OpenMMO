@@ -207,7 +207,7 @@ impl Renderer {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: Some(wgpu::Face::Front),
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
@@ -344,8 +344,8 @@ impl Renderer {
         );
 
         let mut tile_vertices = Vec::new();
+        let mut outline_vertices = Vec::new();
         let mut entity_vertices = Vec::new();
-        let mut edge_vertices = Vec::new();
 
         if let Some(region) = region {
             self.build_region_tiles(region, &mut tile_vertices);
@@ -367,7 +367,7 @@ impl Renderer {
                     entity,
                     region,
                     &mut entity_vertices,
-                    &mut edge_vertices,
+                    &mut outline_vertices,
                     local_player,
                 );
             }
@@ -377,18 +377,18 @@ impl Renderer {
                 entity,
                 region,
                 &mut entity_vertices,
-                &mut edge_vertices,
+                &mut outline_vertices,
                 local_player,
             );
         }
 
         let tile_count = tile_vertices.len() as u32;
+        let outline_count = outline_vertices.len() as u32;
         let entity_count = entity_vertices.len() as u32;
-        let edge_count = edge_vertices.len() as u32;
         let vertices: Vec<Vertex> = tile_vertices
             .iter()
+            .chain(outline_vertices.iter())
             .chain(entity_vertices.iter())
-            .chain(edge_vertices.iter())
             .copied()
             .collect();
 
@@ -432,19 +432,19 @@ impl Renderer {
             render_pass.draw(0..tile_count, 0..1);
         }
 
+        if outline_count > 0 {
+            render_pass.set_pipeline(&self.outline_pipeline);
+            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.draw(tile_count..tile_count + outline_count, 0..1);
+        }
+
         if entity_count > 0 {
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(tile_count..tile_count + entity_count, 0..1);
-        }
-
-        if edge_count > 0 {
-            render_pass.set_pipeline(&self.outline_pipeline);
-            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.draw(
-                tile_count + entity_count..tile_count + entity_count + edge_count,
+                tile_count + outline_count..tile_count + outline_count + entity_count,
                 0..1,
             );
         }
@@ -489,7 +489,7 @@ impl Renderer {
         entity: &WorldEntity,
         region: Option<&RegionDef>,
         entity_vertices: &mut Vec<Vertex>,
-        edge_vertices: &mut Vec<Vertex>,
+        outline_vertices: &mut Vec<Vertex>,
         local_player: Option<openmmo_common::PlayerId>,
     ) {
         match &entity.kind {
@@ -510,7 +510,7 @@ impl Renderer {
                     1.8,
                     color,
                     entity_vertices,
-                    edge_vertices,
+                    outline_vertices,
                 );
             }
             openmmo_common::EntityKind::Npc { position, hp, .. } => {
@@ -526,7 +526,7 @@ impl Renderer {
                     1.6,
                     color,
                     entity_vertices,
-                    edge_vertices,
+                    outline_vertices,
                 );
             }
             openmmo_common::EntityKind::Boss { position, hp, .. } => {
@@ -542,7 +542,7 @@ impl Renderer {
                     3.0,
                     color,
                     entity_vertices,
-                    edge_vertices,
+                    outline_vertices,
                 );
             }
             openmmo_common::EntityKind::Object { position, .. } => {
@@ -553,7 +553,7 @@ impl Renderer {
                     1.2,
                     [0.5, 0.3, 0.15, 1.0],
                     entity_vertices,
-                    edge_vertices,
+                    outline_vertices,
                 );
             }
             openmmo_common::EntityKind::GroundItem { position, .. } => {
@@ -564,7 +564,7 @@ impl Renderer {
                     0.35,
                     [1.0, 0.85, 0.0, 1.0],
                     entity_vertices,
-                    edge_vertices,
+                    outline_vertices,
                 );
             }
         }
@@ -631,15 +631,15 @@ impl Renderer {
         height: f32,
         color: [f32; 4],
         entity_vertices: &mut Vec<Vertex>,
-        edge_vertices: &mut Vec<Vertex>,
+        outline_vertices: &mut Vec<Vertex>,
     ) {
         let [cx, _, cz] = Self::tile_center(tile);
         let surface_y = Self::tile_surface_height(tile, region);
         let center = [cx, surface_y + height * 0.5, cz];
         let size = [width, height, width];
 
+        add_outline_shell(center, size, [0.0, 0.0, 0.0, 1.0], outline_vertices);
         add_box(center, size, color, entity_vertices, true);
-        add_box_edges(center, size, [0.0, 0.0, 0.0, 1.0], edge_vertices, true);
     }
 }
 
@@ -693,115 +693,25 @@ fn add_box(
     }
 }
 
-const OUTLINE_THICKNESS: f32 = 0.04;
-const OUTLINE_EXPAND: f32 = 1.015;
+const OUTLINE_SCALE: f32 = 1.06;
 
-fn add_box_edges(
+fn add_outline_shell(
     center: [f32; 3],
     size: [f32; 3],
     color: [f32; 4],
     vertices: &mut Vec<Vertex>,
-    skip_bottom: bool,
 ) {
-    let [cx, cy, cz] = center;
-    let [sx, sy, sz] = size;
-    let hx = sx * 0.5;
-    let hy = sy * 0.5;
-    let hz = sz * 0.5;
-
-    let corners = [
-        expand_corner([cx - hx, cy - hy, cz - hz], center),
-        expand_corner([cx + hx, cy - hy, cz - hz], center),
-        expand_corner([cx + hx, cy + hy, cz - hz], center),
-        expand_corner([cx - hx, cy + hy, cz - hz], center),
-        expand_corner([cx - hx, cy - hy, cz + hz], center),
-        expand_corner([cx + hx, cy - hy, cz + hz], center),
-        expand_corner([cx + hx, cy + hy, cz + hz], center),
-        expand_corner([cx - hx, cy + hy, cz + hz], center),
-    ];
-
-    let edges: &[[usize; 2]] = if skip_bottom {
-        &[
-            [3, 2],
-            [2, 6],
-            [6, 7],
-            [7, 3],
-            [0, 3],
-            [1, 2],
-            [5, 6],
-            [4, 7],
-        ]
-    } else {
-        &[
-            [0, 1],
-            [1, 5],
-            [5, 4],
-            [4, 0],
-            [3, 2],
-            [2, 6],
-            [6, 7],
-            [7, 3],
-            [0, 3],
-            [1, 2],
-            [5, 6],
-            [4, 7],
-        ]
-    };
-
-    for [a, b] in edges {
-        push_thick_edge(corners[*a], corners[*b], OUTLINE_THICKNESS, color, vertices);
-    }
-}
-
-fn push_thick_edge(
-    a: [f32; 3],
-    b: [f32; 3],
-    thickness: f32,
-    color: [f32; 4],
-    vertices: &mut Vec<Vertex>,
-) {
-    let t = thickness * 0.5;
-    let mut min = [a[0].min(b[0]), a[1].min(b[1]), a[2].min(b[2])];
-    let mut max = [a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2])];
-
-    let dx = (a[0] - b[0]).abs();
-    let dy = (a[1] - b[1]).abs();
-
-    if dx < f32::EPSILON {
-        // Edge runs along X — thicken in Y and Z.
-        min[1] -= t;
-        max[1] += t;
-        min[2] -= t;
-        max[2] += t;
-    } else if dy < f32::EPSILON {
-        // Edge runs along Y — thicken in X and Z.
-        min[0] -= t;
-        max[0] += t;
-        min[2] -= t;
-        max[2] += t;
-    } else {
-        // Edge runs along Z — thicken in X and Y.
-        min[0] -= t;
-        max[0] += t;
-        min[1] -= t;
-        max[1] += t;
-    }
-
-    let center = [
-        (min[0] + max[0]) * 0.5,
-        (min[1] + max[1]) * 0.5,
-        (min[2] + max[2]) * 0.5,
-    ];
-    let size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
-    add_box(center, size, color, vertices, false);
-}
-
-fn expand_corner(corner: [f32; 3], center: [f32; 3]) -> [f32; 3] {
-    [
-        center[0] + (corner[0] - center[0]) * OUTLINE_EXPAND,
-        center[1] + (corner[1] - center[1]) * OUTLINE_EXPAND,
-        center[2] + (corner[2] - center[2]) * OUTLINE_EXPAND,
-    ]
+    add_box(
+        center,
+        [
+            size[0] * OUTLINE_SCALE,
+            size[1] * OUTLINE_SCALE,
+            size[2] * OUTLINE_SCALE,
+        ],
+        color,
+        vertices,
+        true,
+    );
 }
 
 fn push_tri(a: [f32; 3], b: [f32; 3], c: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
