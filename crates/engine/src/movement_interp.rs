@@ -10,6 +10,7 @@ struct Entry {
     from: TilePos,
     to: TilePos,
     started_at: Instant,
+    facing_yaw: f32,
 }
 
 #[derive(Debug, Default)]
@@ -34,6 +35,16 @@ fn progress(started_at: Instant, now: Instant) -> f32 {
     (elapsed.as_secs_f32() / tick.as_secs_f32()).clamp(0.0, 1.0)
 }
 
+fn tile_movement_yaw(from: TilePos, to: TilePos) -> Option<f32> {
+    let dx = (to.x - from.x) as f32;
+    let dz = (to.y - from.y) as f32;
+    if dx.abs() < f32::EPSILON && dz.abs() < f32::EPSILON {
+        None
+    } else {
+        Some(dx.atan2(dz))
+    }
+}
+
 impl EntityMovementInterp {
     pub fn on_position_change(&mut self, id: EntityId, new_pos: TilePos, now: Instant) {
         let entry = match self.entries.get(&id) {
@@ -42,17 +53,20 @@ impl EntityMovementInterp {
                 if old == new_pos {
                     return;
                 }
+                let facing_yaw = tile_movement_yaw(old, new_pos).unwrap_or(existing.facing_yaw);
                 if old.chebyshev_distance(&new_pos) > 1 {
                     Entry {
                         from: new_pos,
                         to: new_pos,
                         started_at: now,
+                        facing_yaw,
                     }
                 } else {
                     Entry {
                         from: old,
                         to: new_pos,
                         started_at: now,
+                        facing_yaw,
                     }
                 }
             }
@@ -60,6 +74,7 @@ impl EntityMovementInterp {
                 from: new_pos,
                 to: new_pos,
                 started_at: now,
+                facing_yaw: 0.0,
             },
         };
         self.entries.insert(id, entry);
@@ -89,6 +104,21 @@ impl EntityMovementInterp {
         let to_y = entity_bounds::tile_surface_height(entry.to, region);
         let surface_y = lerp_f32(from_y, to_y, t);
         Some([cx, surface_y, cz])
+    }
+
+    pub fn is_moving(&self, id: EntityId, now: Instant) -> bool {
+        self.entries.get(&id).is_some_and(|entry| {
+            entry.from != entry.to && progress(entry.started_at, now) < 1.0
+        })
+    }
+
+    pub fn visual_facing_yaw(&self, id: EntityId, now: Instant) -> Option<f32> {
+        let entry = self.entries.get(&id)?;
+        if entry.from != entry.to && progress(entry.started_at, now) < 1.0 {
+            tile_movement_yaw(entry.from, entry.to).or(Some(entry.facing_yaw))
+        } else {
+            Some(entry.facing_yaw)
+        }
     }
 }
 
@@ -139,6 +169,18 @@ mod tests {
         let center = interp.visual_center(id, mid, None).unwrap();
         assert!((center[0] - 5.5).abs() < f32::EPSILON);
         assert!((center[2] - 5.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn movement_sets_facing_yaw() {
+        let mut interp = EntityMovementInterp::default();
+        let id = EntityId(1);
+        let start = now();
+        interp.on_position_change(id, TilePos::new(0, 0), start);
+        interp.on_position_change(id, TilePos::new(1, 0), start);
+
+        let yaw = interp.visual_facing_yaw(id, start).unwrap();
+        assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 0.01);
     }
 
     #[test]

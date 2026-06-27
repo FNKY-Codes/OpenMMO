@@ -64,6 +64,19 @@ impl Camera {
         Vec3::new(self.target_x, self.target_y, self.target_z)
     }
 
+    /// Horizontal direction the camera looks toward (radians, Y-up).
+    pub fn facing_yaw(&self) -> f32 {
+        let eye = self.eye_position();
+        let target = self.target_position();
+        let dx = target.x - eye.x;
+        let dz = target.z - eye.z;
+        if dx.abs() < 1e-6 && dz.abs() < 1e-6 {
+            self.yaw + std::f32::consts::PI
+        } else {
+            dx.atan2(dz)
+        }
+    }
+
     pub fn view_matrix(&self) -> Mat4 {
         Mat4::look_at(
             self.eye_position(),
