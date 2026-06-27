@@ -33,6 +33,12 @@ struct TransparentDraw {
     sort_key: f32,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TileCacheKey {
+    TestMap,
+    Region(openmmo_common::RegionId),
+}
+
 pub struct Renderer {
     window: std::sync::Arc<egui_winit::winit::window::Window>,
     gpu: GpuState,
@@ -45,6 +51,14 @@ pub struct Renderer {
     depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
     camera: Camera,
+    tile_cache_key: Option<TileCacheKey>,
+    tile_vertex_count: u32,
+    scratch_opaque_entity_vertices: Vec<Vertex>,
+    scratch_opaque_outline_vertices: Vec<Vertex>,
+    scratch_transparent_entity_vertices: Vec<Vertex>,
+    scratch_transparent_outline_vertices: Vec<Vertex>,
+    scratch_transparent_draws: Vec<TransparentDraw>,
+    scratch_upload: Vec<Vertex>,
 }
 
 impl Renderer {
@@ -302,6 +316,14 @@ impl Renderer {
             depth_texture,
             depth_view,
             camera: Camera::new(),
+            tile_cache_key: None,
+            tile_vertex_count: 0,
+            scratch_opaque_entity_vertices: Vec::with_capacity(4096),
+            scratch_opaque_outline_vertices: Vec::with_capacity(2048),
+            scratch_transparent_entity_vertices: Vec::with_capacity(512),
+            scratch_transparent_outline_vertices: Vec::with_capacity(512),
+            scratch_transparent_draws: Vec::with_capacity(64),
+            scratch_upload: Vec::with_capacity(8192),
         }
     }
 
@@ -358,6 +380,11 @@ impl Renderer {
         &self.camera
     }
 
+    pub fn invalidate_tile_cache(&mut self) {
+        self.tile_cache_key = None;
+        self.tile_vertex_count = 0;
+    }
+
     pub fn begin_frame(
         &mut self,
     ) -> Result<
@@ -398,19 +425,45 @@ impl Renderer {
             bytemuck::bytes_of(&Uniforms { view_proj: vp.cols }),
         );
 
-        let eye = self.camera.eye_position();
-        let mut tile_vertices = Vec::new();
-        let mut opaque_entity_vertices = Vec::new();
-        let mut opaque_outline_vertices = Vec::new();
-        let mut transparent_entity_vertices = Vec::new();
-        let mut transparent_outline_vertices = Vec::new();
-        let mut transparent_draws = Vec::new();
-
-        if let Some(region) = region {
-            self.build_region_tiles(region, &mut tile_vertices);
+        let tile_key = if let Some(region) = region {
+            TileCacheKey::Region(region.id)
         } else {
-            self.build_test_map(&mut tile_vertices);
+            TileCacheKey::TestMap
+        };
+
+        if self.tile_cache_key != Some(tile_key) {
+            let mut tile_vertices = Vec::new();
+            if let Some(region) = region {
+                self.build_region_tiles(region, &mut tile_vertices);
+            } else {
+                self.build_test_map(&mut tile_vertices);
+            }
+            self.tile_vertex_count = tile_vertices.len() as u32;
+            if !tile_vertices.is_empty() {
+                self.gpu.queue.write_buffer(
+                    &self.vertex_buffer,
+                    0,
+                    bytemuck::cast_slice(&tile_vertices),
+                );
+            }
+            self.tile_cache_key = Some(tile_key);
         }
+
+        let eye = self.camera.eye_position();
+        let mut opaque_entity_vertices =
+            std::mem::take(&mut self.scratch_opaque_entity_vertices);
+        let mut opaque_outline_vertices =
+            std::mem::take(&mut self.scratch_opaque_outline_vertices);
+        let mut transparent_entity_vertices =
+            std::mem::take(&mut self.scratch_transparent_entity_vertices);
+        let mut transparent_outline_vertices =
+            std::mem::take(&mut self.scratch_transparent_outline_vertices);
+        let mut transparent_draws = std::mem::take(&mut self.scratch_transparent_draws);
+        opaque_entity_vertices.clear();
+        opaque_outline_vertices.clear();
+        transparent_entity_vertices.clear();
+        transparent_outline_vertices.clear();
+        transparent_draws.clear();
 
         let mut local_entity = None;
         for entity in entities {
@@ -449,7 +502,7 @@ impl Renderer {
             );
         }
 
-        let tile_count = tile_vertices.len() as u32;
+        let tile_count = self.tile_vertex_count;
         let opaque_solid_base = tile_count;
         let opaque_solid_count = opaque_entity_vertices.len() as u32;
         let opaque_outline_base = opaque_solid_base + opaque_solid_count;
@@ -458,19 +511,26 @@ impl Renderer {
         let transparent_solid_count = transparent_entity_vertices.len() as u32;
         let transparent_outline_base = transparent_solid_base + transparent_solid_count;
 
-        let vertices: Vec<Vertex> = tile_vertices
-            .iter()
-            .chain(opaque_entity_vertices.iter())
-            .chain(opaque_outline_vertices.iter())
-            .chain(transparent_entity_vertices.iter())
-            .chain(transparent_outline_vertices.iter())
-            .copied()
-            .collect();
+        self.scratch_upload.clear();
+        self.scratch_upload.extend(&opaque_entity_vertices);
+        self.scratch_upload.extend(&opaque_outline_vertices);
+        self.scratch_upload.extend(&transparent_entity_vertices);
+        self.scratch_upload.extend(&transparent_outline_vertices);
 
-        if !vertices.is_empty() {
-            self.gpu
-                .queue
-                .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+        self.scratch_opaque_entity_vertices = opaque_entity_vertices;
+        self.scratch_opaque_outline_vertices = opaque_outline_vertices;
+        self.scratch_transparent_entity_vertices = transparent_entity_vertices;
+        self.scratch_transparent_outline_vertices = transparent_outline_vertices;
+        self.scratch_transparent_draws = transparent_draws;
+
+        if !self.scratch_upload.is_empty() {
+            let byte_offset =
+                tile_count as u64 * std::mem::size_of::<Vertex>() as u64;
+            self.gpu.queue.write_buffer(
+                &self.vertex_buffer,
+                byte_offset,
+                bytemuck::cast_slice(&self.scratch_upload),
+            );
         }
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -500,21 +560,12 @@ impl Renderer {
             timestamp_writes: None,
         });
 
-        if tile_count > 0 {
+        let has_opaque = opaque_outline_base > 0;
+        if has_opaque {
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(0..tile_count, 0..1);
-        }
-
-        if opaque_solid_count > 0 {
-            render_pass.set_pipeline(&self.pipeline);
-            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(
-                opaque_solid_base..opaque_solid_base + opaque_solid_count,
-                0..1,
-            );
+            render_pass.draw(0..opaque_outline_base, 0..1);
         }
 
         if opaque_outline_count > 0 {
@@ -527,13 +578,13 @@ impl Renderer {
             );
         }
 
-        transparent_draws.sort_by(|a, b| {
+        self.scratch_transparent_draws.sort_by(|a, b| {
             b.sort_key
                 .partial_cmp(&a.sort_key)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        for draw in &transparent_draws {
+        for draw in &self.scratch_transparent_draws {
             if draw.solid_len > 0 {
                 render_pass.set_pipeline(&self.transparent_pipeline);
                 render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
