@@ -38,6 +38,8 @@ pub fn spawn_boss(world: &mut GameWorld) {
         position: TilePos::new(25, 25),
         hp: 100,
         max_hp: 100,
+        prowess: 12,
+        fortitude: 8,
         phase: 1,
         mechanics_active: vec!["ground_slam".into()],
     });

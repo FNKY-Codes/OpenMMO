@@ -2,7 +2,9 @@ use openmmo_common::{EntityId, EquipSlot, HarvestTag, PlayerAction, PlayerId, Sk
 use openmmo_protocol::{ChatChannel, ClientMessage, LedgerContract, ServerMessage};
 use rand::Rng;
 
-use crate::combat::{cast_spell, npc_attack_player, player_attack_npc};
+use crate::combat::{
+    boss_attack_player, npc_attack_player, player_attack_boss, player_attack_npc, use_gadget,
+};
 use crate::pathfinding::{find_attack_path, find_path};
 use crate::state::GameWorld;
 
@@ -948,40 +950,74 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                 let mut rng = rand::thread_rng();
                 let boss_target = world.boss.as_ref().map(|b| b.entity_id) == Some(target);
                 if boss_target {
-                    let in_range = world
-                        .players
-                        .get(&pid)
-                        .zip(world.boss.as_ref())
-                        .map(|(p, b)| p.position.chebyshev_distance(&b.position) <= 1)
-                        .unwrap_or(false);
-                    if in_range {
-                        let player_eid = world.players.get(&pid).map(|p| p.entity_id);
-                        if let (Some(player), Some(boss)) =
-                            (world.players.get_mut(&pid), world.boss.as_mut())
-                        {
-                            let max_hit = crate::combat::player_max_hit(player, style, &content);
-                            let dmg = crate::combat::roll_damage(max_hit);
-                            boss.hp = boss.hp.saturating_sub(dmg);
-                            if let Some(eid) = player_eid {
-                                messages.push((
-                                    MessageTarget::Player(pid),
-                                    ServerMessage::Damage {
-                                        source: eid,
-                                        target,
-                                        amount: dmg,
-                                        style,
-                                    },
-                                ));
+                    if rng.gen_bool(0.5) {
+                        let in_range = world
+                            .players
+                            .get(&pid)
+                            .zip(world.boss.as_ref())
+                            .map(|(p, b)| p.position.chebyshev_distance(&b.position) <= 1)
+                            .unwrap_or(false);
+                        if in_range {
+                            let player_eid = world.players.get(&pid).map(|p| p.entity_id);
+                            if let (Some(player), Some(boss)) =
+                                (world.players.get_mut(&pid), world.boss.as_mut())
+                            {
+                                if let Some(dmg) =
+                                    player_attack_boss(player, boss, style, &content)
+                                {
+                                    if let Some(eid) = player_eid {
+                                        messages.push((
+                                            MessageTarget::Player(pid),
+                                            ServerMessage::Damage {
+                                                source: eid,
+                                                target,
+                                                amount: dmg,
+                                                style,
+                                            },
+                                        ));
+                                    }
+                                }
+                                let boss_dead =
+                                    world.boss.as_ref().map(|b| b.hp == 0).unwrap_or(false);
+                                drop(player);
+                                if boss_dead {
+                                    world.boss = None;
+                                    messages.push((
+                                        MessageTarget::Player(pid),
+                                        ServerMessage::Death {
+                                            entity: target,
+                                            killer: player_eid,
+                                        },
+                                    ));
+                                }
                             }
-                            if boss.hp == 0 {
-                                world.boss = None;
-                                messages.push((
-                                    MessageTarget::Player(pid),
-                                    ServerMessage::Death {
-                                        entity: target,
-                                        killer: player_eid,
-                                    },
-                                ));
+                        }
+                    } else {
+                        let in_range = world
+                            .players
+                            .get(&pid)
+                            .zip(world.boss.as_ref())
+                            .map(|(p, b)| p.position.chebyshev_distance(&b.position) <= 1)
+                            .unwrap_or(false);
+                        if in_range {
+                            if let (Some(boss), Some(player)) =
+                                (world.boss.as_ref(), world.players.get_mut(&pid))
+                            {
+                                let player_eid = player.entity_id;
+                                if let Some(dmg) = boss_attack_player(boss, player, &content) {
+                                    messages.push((
+                                        MessageTarget::Player(pid),
+                                        ServerMessage::Damage {
+                                            source: target,
+                                            target: player_eid,
+                                            amount: dmg,
+                                            style: openmmo_common::CombatStyle::Melee,
+                                        },
+                                    ));
+                                    if player.hp == 0 {
+                                        respawn_player(world, pid, messages);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1081,7 +1117,9 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                     (world.players.get_mut(&pid), world.npcs.get_mut(&target))
                 {
                     let npc_dead =
-                        if let Some(dmg) = cast_spell(player, npc, spell.max_hit, spell.xp) {
+                        if let Some(dmg) =
+                            use_gadget(player, npc, spell.max_hit, spell.xp, &content)
+                        {
                             messages.push((
                                 MessageTarget::Player(pid),
                                 ServerMessage::Damage {
