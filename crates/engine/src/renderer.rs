@@ -3,6 +3,7 @@ use egui_wgpu::wgpu;
 use openmmo_common::{RegionDef, TilePos, WorldEntity};
 
 use crate::camera::Camera;
+use crate::entity_bounds;
 use crate::math::Vec3;
 
 #[repr(C)]
@@ -660,6 +661,7 @@ impl Renderer {
                 position,
                 ..
             } => {
+                let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 let color = if Some(*player_id) == local_player {
                     [0.2, 0.6, 1.0, 1.0]
                 } else {
@@ -669,8 +671,8 @@ impl Renderer {
                     *position,
                     region,
                     eye,
-                    0.9,
-                    1.8,
+                    width,
+                    height,
                     color,
                     opaque_entity_vertices,
                     opaque_outline_vertices,
@@ -680,6 +682,7 @@ impl Renderer {
                 );
             }
             openmmo_common::EntityKind::Npc { position, hp, .. } => {
+                let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 let color = if *hp > 0 {
                     [0.85, 0.2, 0.2, 1.0]
                 } else {
@@ -689,8 +692,8 @@ impl Renderer {
                     *position,
                     region,
                     eye,
-                    0.8,
-                    1.6,
+                    width,
+                    height,
                     color,
                     opaque_entity_vertices,
                     opaque_outline_vertices,
@@ -700,6 +703,7 @@ impl Renderer {
                 );
             }
             openmmo_common::EntityKind::Boss { position, hp, .. } => {
+                let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 let color = if *hp > 0 {
                     [0.6, 0.1, 0.8, 1.0]
                 } else {
@@ -709,8 +713,8 @@ impl Renderer {
                     *position,
                     region,
                     eye,
-                    1.4,
-                    3.0,
+                    width,
+                    height,
                     color,
                     opaque_entity_vertices,
                     opaque_outline_vertices,
@@ -720,12 +724,13 @@ impl Renderer {
                 );
             }
             openmmo_common::EntityKind::Object { position, .. } => {
+                let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 self.add_entity_cube(
                     *position,
                     region,
                     eye,
-                    0.7,
-                    1.2,
+                    width,
+                    height,
                     [0.5, 0.3, 0.15, 1.0],
                     opaque_entity_vertices,
                     opaque_outline_vertices,
@@ -735,12 +740,13 @@ impl Renderer {
                 );
             }
             openmmo_common::EntityKind::GroundItem { position, .. } => {
+                let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 self.add_entity_cube(
                     *position,
                     region,
                     eye,
-                    0.35,
-                    0.35,
+                    width,
+                    height,
                     [1.0, 0.85, 0.0, 1.0],
                     opaque_entity_vertices,
                     opaque_outline_vertices,
@@ -753,35 +759,7 @@ impl Renderer {
     }
 
     fn tile_surface_height(tile: TilePos, region: Option<&RegionDef>) -> f32 {
-        let tile_type = if let Some(region) = region {
-            if tile.x >= 0
-                && tile.y >= 0
-                && (tile.x as u32) < region.width
-                && (tile.y as u32) < region.height
-            {
-                let idx = (tile.y as u32 * region.width + tile.x as u32) as usize;
-                region.tiles.get(idx).copied().unwrap_or(0)
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        Self::tile_type_height(tile_type, region.is_none())
-    }
-
-    fn tile_type_height(tile_type: u8, test_map: bool) -> f32 {
-        if test_map {
-            0.15
-        } else {
-            match tile_type {
-                0 => 0.12,
-                1 => 0.2,
-                2 => 0.05,
-                _ => 0.1,
-            }
-        }
+        entity_bounds::tile_surface_height(tile, region)
     }
 
     fn tile_center(tile: TilePos) -> [f32; 3] {

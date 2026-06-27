@@ -643,6 +643,7 @@ impl EngineApp {
                     width,
                     height,
                     &self.entities,
+                    self.region.as_ref(),
                 );
                 let screen_pos =
                     egui::pos2(self.input.mouse_x / pixels_per_point, self.input.mouse_y / pixels_per_point);
@@ -673,6 +674,7 @@ impl EngineApp {
                 width,
                 height,
                 &self.entities,
+                self.region.as_ref(),
             ) {
                 if let Some(msg) = self.handle_entity_click(entity_id) {
                     self.send(msg);
