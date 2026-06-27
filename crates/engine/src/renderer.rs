@@ -172,7 +172,7 @@ impl Renderer {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Cw,
+                front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
@@ -216,7 +216,7 @@ impl Renderer {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Cw,
+                front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
@@ -830,14 +830,14 @@ fn add_box(
         [cx - hx, cy + hy, cz + hz],
     ];
 
-    // Outward CCW in world space; pairs with +f projection and FrontFace::Cw culling.
+    // Outward CCW in world space; pairs with +f projection and FrontFace::Ccw culling.
     let faces: [([usize; 4], [f32; 3]); 6] = [
         ([0, 3, 2, 1], [0.0, 0.0, -1.0]),
         ([5, 6, 7, 4], [0.0, 0.0, 1.0]),
         ([4, 7, 3, 0], [-1.0, 0.0, 0.0]),
-        ([1, 5, 6, 2], [1.0, 0.0, 0.0]),
-        ([3, 2, 6, 7], [0.0, 1.0, 0.0]),
-        ([4, 5, 1, 0], [0.0, -1.0, 0.0]),
+        ([1, 2, 6, 5], [1.0, 0.0, 0.0]),
+        ([3, 7, 6, 2], [0.0, 1.0, 0.0]),
+        ([4, 0, 1, 5], [0.0, -1.0, 0.0]),
     ];
 
     for (face_idx, (indices, normal)) in faces.iter().enumerate() {
