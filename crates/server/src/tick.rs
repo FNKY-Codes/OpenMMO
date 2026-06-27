@@ -24,9 +24,12 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
     let mut moved_players = Vec::new();
     let occupied = world.entity_occupied_tiles();
     let target_positions = entity_positions(world);
+    let object_positions = object_positions(world);
+    let scavenge_ticks = scavenge_ticks_by_entity(world);
     let player_ids: Vec<PlayerId> = world.players.keys().copied().collect();
     for player_id in player_ids {
         let mut retry_attack: Option<(EntityId, openmmo_common::CombatStyle, TilePos)> = None;
+        let mut retry_scavenge: Option<(EntityId, TilePos)> = None;
         {
             let player = match world.players.get_mut(&player_id) {
                 Some(p) => p,
@@ -37,6 +40,7 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                 index,
                 attack_target,
                 attack_style,
+                scavenge_target,
             } = &mut player.action
             {
                 if *index + 1 < path.len() {
@@ -59,6 +63,15 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                             if let Some(target) = *attack_target {
                                 let target_pos = target_positions.get(&target).copied();
                                 try_begin_combat_from_walk(player, target_pos);
+                            } else if let Some(object_entity) = *scavenge_target {
+                                let object_pos = object_positions.get(&object_entity).copied();
+                                let ticks = scavenge_ticks.get(&object_entity).copied();
+                                try_begin_scavenge_from_walk(
+                                    player,
+                                    object_entity,
+                                    object_pos,
+                                    ticks,
+                                );
                             }
                         }
                     }
@@ -73,6 +86,17 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                             player.action = PlayerAction::Idle;
                         }
                     }
+                } else if let Some(object_entity) = *scavenge_target {
+                    let object_pos = object_positions.get(&object_entity).copied();
+                    let ticks = scavenge_ticks.get(&object_entity).copied();
+                    try_begin_scavenge_from_walk(player, object_entity, object_pos, ticks);
+                    if !matches!(player.action, PlayerAction::Scavenging { .. }) {
+                        if let Some(pos) = object_pos {
+                            retry_scavenge = Some((object_entity, pos));
+                        } else {
+                            player.action = PlayerAction::Idle;
+                        }
+                    }
                 } else {
                     player.action = PlayerAction::Idle;
                 }
@@ -82,6 +106,9 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
         }
         if let Some((target, style, target_pos)) = retry_attack {
             retry_attack_path(world, player_id, target, style, target_pos);
+        }
+        if let Some((object_entity, target_pos)) = retry_scavenge {
+            retry_scavenge_path(world, player_id, object_entity, target_pos);
         }
     }
     for (pid, pos) in moved_players {
@@ -339,6 +366,7 @@ fn handle_walk(
             index: 0,
             attack_target: None,
             attack_style: None,
+            scavenge_target: None,
         };
         player.ticks_stationary = 0;
     }
@@ -362,6 +390,29 @@ fn entity_positions(world: &GameWorld) -> std::collections::HashMap<EntityId, Ti
 
 fn entity_position(world: &GameWorld, entity_id: EntityId) -> Option<TilePos> {
     entity_positions(world).get(&entity_id).copied()
+}
+
+fn object_positions(world: &GameWorld) -> std::collections::HashMap<EntityId, TilePos> {
+    world
+        .objects
+        .iter()
+        .filter(|(_, o)| !o.depleted)
+        .map(|(entity_id, obj)| (*entity_id, obj.position))
+        .collect()
+}
+
+fn scavenge_ticks_by_entity(world: &GameWorld) -> std::collections::HashMap<EntityId, u32> {
+    world
+        .objects
+        .iter()
+        .filter(|(_, o)| !o.depleted)
+        .filter_map(|(entity_id, obj)| {
+            world
+                .content
+                .object(obj.object_id)
+                .map(|def| (*entity_id, def.scavenging_ticks))
+        })
+        .collect()
 }
 
 fn try_begin_combat_from_walk(
@@ -393,6 +444,35 @@ fn try_begin_combat_from_walk(
     }
 }
 
+fn try_begin_scavenge_from_walk(
+    player: &mut openmmo_common::PlayerState,
+    object_entity: EntityId,
+    object_pos: Option<TilePos>,
+    ticks: Option<u32>,
+) {
+    let PlayerAction::Walking { scavenge_target, .. } = &player.action else {
+        return;
+    };
+    if *scavenge_target != Some(object_entity) {
+        return;
+    }
+    let Some(object_pos) = object_pos else {
+        player.action = PlayerAction::Idle;
+        return;
+    };
+    if player.position.chebyshev_distance(&object_pos) > 1 {
+        return;
+    }
+    let Some(ticks) = ticks else {
+        player.action = PlayerAction::Idle;
+        return;
+    };
+    player.action = PlayerAction::Scavenging {
+        object_entity,
+        ticks_remaining: ticks,
+    };
+}
+
 fn retry_attack_path(
     world: &mut GameWorld,
     player_id: PlayerId,
@@ -415,6 +495,7 @@ fn retry_attack_path(
             index: 0,
             attack_target: Some(target),
             attack_style: Some(style),
+            scavenge_target: None,
         };
     } else {
         player.action = PlayerAction::Combat {
@@ -425,12 +506,49 @@ fn retry_attack_path(
     }
 }
 
+fn retry_scavenge_path(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    object_entity: EntityId,
+    target_pos: TilePos,
+) {
+    let player_pos = match world.players.get(&player_id) {
+        Some(p) => p.position,
+        None => return,
+    };
+    let walkable = world.walkable_for_player(player_id);
+    let path = find_attack_path(player_pos, target_pos, &walkable);
+    let ticks = scavenge_ticks_by_entity(world).get(&object_entity).copied();
+    let Some(player) = world.players.get_mut(&player_id) else {
+        return;
+    };
+    if path.len() > 1 {
+        player.action = PlayerAction::Walking {
+            path,
+            index: 0,
+            attack_target: None,
+            attack_style: None,
+            scavenge_target: Some(object_entity),
+        };
+    } else if player.position.chebyshev_distance(&target_pos) <= 1 {
+        if let Some(ticks) = ticks {
+            player.action = PlayerAction::Scavenging {
+                object_entity,
+                ticks_remaining: ticks,
+            };
+        } else {
+            player.action = PlayerAction::Idle;
+        }
+    } else {
+        player.action = PlayerAction::Idle;
+    }
+}
+
 fn handle_scavenge(
     world: &mut GameWorld,
     player_id: PlayerId,
     object_entity: EntityId,
 ) -> Vec<ServerMessage> {
-    let mut out = Vec::new();
     let obj = match world.objects.get(&object_entity) {
         Some(o) if !o.depleted => o.clone(),
         _ => {
@@ -441,11 +559,11 @@ fn handle_scavenge(
     };
     let def = match world.content.object(obj.object_id) {
         Some(d) => d.clone(),
-        None => return out,
+        None => return Vec::new(),
     };
-    let player = match world.players.get_mut(&player_id) {
+    let player = match world.players.get(&player_id) {
         Some(p) => p,
-        None => return out,
+        None => return Vec::new(),
     };
     if player.skills.level(Skill::Scavenging) < def.scavenging_level {
         return vec![ServerMessage::Error {
@@ -466,11 +584,42 @@ fn handle_scavenge(
             }];
         }
     }
-    player.action = PlayerAction::Scavenging {
-        object_entity,
-        ticks_remaining: def.scavenging_ticks,
+
+    let player_pos = player.position;
+    let object_pos = obj.position;
+    let ticks = def.scavenging_ticks;
+
+    if player_pos.chebyshev_distance(&object_pos) <= 1 {
+        if let Some(player) = world.players.get_mut(&player_id) {
+            player.action = PlayerAction::Scavenging {
+                object_entity,
+                ticks_remaining: ticks,
+            };
+        }
+        return Vec::new();
+    }
+
+    let walkable = world.walkable_for_player(player_id);
+    let path = find_attack_path(player_pos, object_pos, &walkable);
+    let Some(player) = world.players.get_mut(&player_id) else {
+        return Vec::new();
     };
-    out
+    if path.len() > 1 {
+        player.action = PlayerAction::Walking {
+            path,
+            index: 0,
+            attack_target: None,
+            attack_style: None,
+            scavenge_target: Some(object_entity),
+        };
+        player.ticks_stationary = 0;
+    } else if player.position.chebyshev_distance(&object_pos) <= 1 {
+        player.action = PlayerAction::Scavenging {
+            object_entity,
+            ticks_remaining: ticks,
+        };
+    }
+    Vec::new()
 }
 
 fn handle_refine(
@@ -556,6 +705,7 @@ fn handle_attack(
             index: 0,
             attack_target: Some(target),
             attack_style: Some(style),
+            scavenge_target: None,
         };
         player.ticks_stationary = 0;
     } else {
@@ -1970,6 +2120,74 @@ mod routing_tests {
         assert!(
             reached_combat,
             "player should reach attack range and enter combat"
+        );
+    }
+
+    #[test]
+    fn scavenge_out_of_range_walks_to_object_then_scavenges() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content);
+
+        let (entity_id, object_pos) = world
+            .objects
+            .iter()
+            .find_map(|(eid, obj)| {
+                world
+                    .content
+                    .object(obj.object_id)
+                    .filter(|d| d.harvest_tag == Some(HarvestTag::Timber))
+                    .map(|_| (*eid, obj.position))
+            })
+            .expect("timber node");
+
+        let pid = PlayerId(Uuid::from_u128(1));
+        let mut player = test_player(1);
+        player.inventory.slots[0] = Some(InventorySlot {
+            item_id: ItemId(9),
+            quantity: 1,
+        });
+        player.position = TilePos::new(object_pos.x + 10, object_pos.y + 10);
+        player.last_position = player.position;
+        world.players.insert(pid, player);
+
+        let msgs = handle_client_message(
+            &mut world,
+            pid,
+            ClientMessage::Scavenge {
+                object_entity: entity_id,
+            },
+        );
+        assert!(msgs.is_empty());
+
+        let action = &world.players.get(&pid).unwrap().action;
+        let openmmo_common::PlayerAction::Walking {
+            scavenge_target, ..
+        } = action
+        else {
+            panic!("expected walking toward scavenge target, got {action:?}");
+        };
+        assert_eq!(*scavenge_target, Some(entity_id));
+
+        let mut reached_scavenge = false;
+        for _ in 0..50 {
+            process_tick(&mut world);
+            if matches!(
+                world.players.get(&pid).unwrap().action,
+                openmmo_common::PlayerAction::Scavenging { .. }
+            ) {
+                let player = world.players.get(&pid).unwrap();
+                let dist = player
+                    .position
+                    .chebyshev_distance(&world.objects.get(&entity_id).unwrap().position);
+                assert!(dist <= 1);
+                reached_scavenge = true;
+                break;
+            }
+        }
+        assert!(
+            reached_scavenge,
+            "player should reach scavenge range and begin scavenging"
         );
     }
 
