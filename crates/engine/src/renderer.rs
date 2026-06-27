@@ -28,6 +28,7 @@ pub struct Renderer {
     window: std::sync::Arc<egui_winit::winit::window::Window>,
     gpu: GpuState,
     pipeline: wgpu::RenderPipeline,
+    outline_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
@@ -179,6 +180,54 @@ impl Renderer {
             cache: None,
         });
 
+        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Outline Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: -2,
+                    slope_scale: -1.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
             size: (std::mem::size_of::<Vertex>() * 60000) as u64,
@@ -195,6 +244,7 @@ impl Renderer {
                 config,
             },
             pipeline,
+            outline_pipeline,
             vertex_buffer,
             uniform_buffer,
             uniform_bind_group,
@@ -297,12 +347,14 @@ impl Renderer {
             bytemuck::bytes_of(&Uniforms { view_proj: vp.cols }),
         );
 
-        let mut vertices = Vec::new();
+        let mut tile_vertices = Vec::new();
+        let mut entity_vertices = Vec::new();
+        let mut edge_vertices = Vec::new();
 
         if let Some(region) = region {
-            self.build_region_tiles(region, &mut vertices);
+            self.build_region_tiles(region, &mut tile_vertices);
         } else {
-            self.build_test_map(&mut vertices);
+            self.build_test_map(&mut tile_vertices);
         }
 
         let mut local_entity = None;
@@ -315,12 +367,34 @@ impl Renderer {
             if is_local {
                 local_entity = Some(entity);
             } else {
-                self.build_entity(entity, &mut vertices, local_player);
+                self.build_entity(
+                    entity,
+                    region,
+                    &mut entity_vertices,
+                    &mut edge_vertices,
+                    local_player,
+                );
             }
         }
         if let Some(entity) = local_entity {
-            self.build_entity(entity, &mut vertices, local_player);
+            self.build_entity(
+                entity,
+                region,
+                &mut entity_vertices,
+                &mut edge_vertices,
+                local_player,
+            );
         }
+
+        let tile_count = tile_vertices.len() as u32;
+        let entity_count = entity_vertices.len() as u32;
+        let edge_count = edge_vertices.len() as u32;
+        let vertices: Vec<Vertex> = tile_vertices
+            .iter()
+            .chain(edge_vertices.iter())
+            .chain(entity_vertices.iter())
+            .copied()
+            .collect();
 
         if !vertices.is_empty() {
             self.gpu
@@ -355,11 +429,28 @@ impl Renderer {
             timestamp_writes: None,
         });
 
-        if !vertices.is_empty() {
+        if tile_count > 0 {
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(0..vertices.len() as u32, 0..1);
+            render_pass.draw(0..tile_count, 0..1);
+        }
+
+        if edge_count > 0 {
+            render_pass.set_pipeline(&self.outline_pipeline);
+            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.draw(tile_count..tile_count + edge_count, 0..1);
+        }
+
+        if entity_count > 0 {
+            render_pass.set_pipeline(&self.pipeline);
+            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.draw(
+                tile_count + edge_count..tile_count + edge_count + entity_count,
+                0..1,
+            );
         }
     }
 
@@ -400,7 +491,9 @@ impl Renderer {
     fn build_entity(
         &self,
         entity: &WorldEntity,
-        vertices: &mut Vec<Vertex>,
+        region: Option<&RegionDef>,
+        entity_vertices: &mut Vec<Vertex>,
+        edge_vertices: &mut Vec<Vertex>,
         local_player: Option<openmmo_common::PlayerId>,
     ) {
         match &entity.kind {
@@ -414,7 +507,15 @@ impl Renderer {
                 } else {
                     [0.9, 0.8, 0.2, 1.0]
                 };
-                self.add_entity_cube(*position, 0.9, 1.8, color, vertices);
+                self.add_entity_cube(
+                    *position,
+                    region,
+                    0.9,
+                    1.8,
+                    color,
+                    entity_vertices,
+                    edge_vertices,
+                );
             }
             openmmo_common::EntityKind::Npc { position, hp, .. } => {
                 let color = if *hp > 0 {
@@ -422,7 +523,15 @@ impl Renderer {
                 } else {
                     [0.4, 0.4, 0.4, 0.6]
                 };
-                self.add_entity_cube(*position, 0.8, 1.6, color, vertices);
+                self.add_entity_cube(
+                    *position,
+                    region,
+                    0.8,
+                    1.6,
+                    color,
+                    entity_vertices,
+                    edge_vertices,
+                );
             }
             openmmo_common::EntityKind::Boss { position, hp, .. } => {
                 let color = if *hp > 0 {
@@ -430,13 +539,69 @@ impl Renderer {
                 } else {
                     [0.3, 0.3, 0.3, 0.6]
                 };
-                self.add_entity_cube(*position, 1.4, 3.0, color, vertices);
+                self.add_entity_cube(
+                    *position,
+                    region,
+                    1.4,
+                    3.0,
+                    color,
+                    entity_vertices,
+                    edge_vertices,
+                );
             }
             openmmo_common::EntityKind::Object { position, .. } => {
-                self.add_entity_cube(*position, 0.7, 1.2, [0.5, 0.3, 0.15, 1.0], vertices);
+                self.add_entity_cube(
+                    *position,
+                    region,
+                    0.7,
+                    1.2,
+                    [0.5, 0.3, 0.15, 1.0],
+                    entity_vertices,
+                    edge_vertices,
+                );
             }
             openmmo_common::EntityKind::GroundItem { position, .. } => {
-                self.add_entity_cube(*position, 0.35, 0.35, [1.0, 0.85, 0.0, 1.0], vertices);
+                self.add_entity_cube(
+                    *position,
+                    region,
+                    0.35,
+                    0.35,
+                    [1.0, 0.85, 0.0, 1.0],
+                    entity_vertices,
+                    edge_vertices,
+                );
+            }
+        }
+    }
+
+    fn tile_surface_height(tile: TilePos, region: Option<&RegionDef>) -> f32 {
+        let tile_type = if let Some(region) = region {
+            if tile.x >= 0
+                && tile.y >= 0
+                && (tile.x as u32) < region.width
+                && (tile.y as u32) < region.height
+            {
+                let idx = (tile.y as u32 * region.width + tile.x as u32) as usize;
+                region.tiles.get(idx).copied().unwrap_or(0)
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        Self::tile_type_height(tile_type, region.is_none())
+    }
+
+    fn tile_type_height(tile_type: u8, test_map: bool) -> f32 {
+        if test_map {
+            0.15
+        } else {
+            match tile_type {
+                0 => 0.12,
+                1 => 0.2,
+                2 => 0.05,
+                _ => 0.1,
             }
         }
     }
@@ -458,28 +623,37 @@ impl Renderer {
             [1.0, height.max(0.05), 1.0],
             color,
             vertices,
+            false,
         );
     }
 
     fn add_entity_cube(
         &self,
         tile: TilePos,
+        region: Option<&RegionDef>,
         width: f32,
         height: f32,
         color: [f32; 4],
-        vertices: &mut Vec<Vertex>,
+        entity_vertices: &mut Vec<Vertex>,
+        edge_vertices: &mut Vec<Vertex>,
     ) {
         let [cx, _, cz] = Self::tile_center(tile);
-        add_box(
-            [cx, height * 0.5, cz],
-            [width, height, width],
-            color,
-            vertices,
-        );
+        let surface_y = Self::tile_surface_height(tile, region);
+        let center = [cx, surface_y + height * 0.5, cz];
+        let size = [width, height, width];
+
+        add_box(center, size, color, entity_vertices, true);
+        add_box_edges(center, size, [0.0, 0.0, 0.0, 1.0], edge_vertices, true);
     }
 }
 
-fn add_box(center: [f32; 3], size: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
+fn add_box(
+    center: [f32; 3],
+    size: [f32; 3],
+    color: [f32; 4],
+    vertices: &mut Vec<Vertex>,
+    skip_bottom: bool,
+) {
     let [cx, cy, cz] = center;
     let [sx, sy, sz] = size;
     let hx = sx * 0.5;
@@ -506,7 +680,10 @@ fn add_box(center: [f32; 3], size: [f32; 3], color: [f32; 4], vertices: &mut Vec
         ([4, 5, 1, 0], [0.0, -1.0, 0.0]),
     ];
 
-    for (indices, normal) in faces {
+    for (face_idx, (indices, normal)) in faces.iter().enumerate() {
+        if skip_bottom && face_idx == 5 {
+            continue;
+        }
         let shade = 0.65 + 0.35 * (normal[1].max(0.0) + normal[2].abs() * 0.15);
         let face_color = [
             (color[0] * shade).min(1.0),
@@ -514,10 +691,100 @@ fn add_box(center: [f32; 3], size: [f32; 3], color: [f32; 4], vertices: &mut Vec
             (color[2] * shade).min(1.0),
             color[3],
         ];
-        let [a, b, c, d] = indices;
+        let [a, b, c, d] = *indices;
         push_tri(corners[a], corners[b], corners[c], face_color, vertices);
         push_tri(corners[a], corners[c], corners[d], face_color, vertices);
     }
+}
+
+const OUTLINE_THICKNESS: f32 = 0.04;
+
+fn add_box_edges(
+    center: [f32; 3],
+    size: [f32; 3],
+    color: [f32; 4],
+    vertices: &mut Vec<Vertex>,
+    skip_bottom: bool,
+) {
+    let [cx, cy, cz] = center;
+    let [sx, sy, sz] = size;
+    let hx = sx * 0.5;
+    let hy = sy * 0.5;
+    let hz = sz * 0.5;
+
+    let corners = [
+        [cx - hx, cy - hy, cz - hz],
+        [cx + hx, cy - hy, cz - hz],
+        [cx + hx, cy + hy, cz - hz],
+        [cx - hx, cy + hy, cz - hz],
+        [cx - hx, cy - hy, cz + hz],
+        [cx + hx, cy - hy, cz + hz],
+        [cx + hx, cy + hy, cz + hz],
+        [cx - hx, cy + hy, cz + hz],
+    ];
+
+    let edges: &[[usize; 2]] = if skip_bottom {
+        &[
+            [3, 2],
+            [2, 6],
+            [6, 7],
+            [7, 3],
+            [0, 3],
+            [1, 2],
+            [5, 6],
+            [4, 7],
+        ]
+    } else {
+        &[
+            [0, 1],
+            [1, 5],
+            [5, 4],
+            [4, 0],
+            [3, 2],
+            [2, 6],
+            [6, 7],
+            [7, 3],
+            [0, 3],
+            [1, 2],
+            [5, 6],
+            [4, 7],
+        ]
+    };
+
+    for [a, b] in edges {
+        push_thick_edge(corners[*a], corners[*b], OUTLINE_THICKNESS, color, vertices);
+    }
+}
+
+fn push_thick_edge(
+    a: [f32; 3],
+    b: [f32; 3],
+    thickness: f32,
+    color: [f32; 4],
+    vertices: &mut Vec<Vertex>,
+) {
+    let t = thickness * 0.5;
+    let mut min = [a[0].min(b[0]), a[1].min(b[1]), a[2].min(b[2])];
+    let mut max = [a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2])];
+
+    if (a[0] - b[0]).abs() < f32::EPSILON {
+        min[0] -= t;
+        max[0] += t;
+    } else if (a[1] - b[1]).abs() < f32::EPSILON {
+        min[1] -= t;
+        max[1] += t;
+    } else {
+        min[2] -= t;
+        max[2] += t;
+    }
+
+    let center = [
+        (min[0] + max[0]) * 0.5,
+        (min[1] + max[1]) * 0.5,
+        (min[2] + max[2]) * 0.5,
+    ];
+    let size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+    add_box(center, size, color, vertices, false);
 }
 
 fn push_tri(a: [f32; 3], b: [f32; 3], c: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
