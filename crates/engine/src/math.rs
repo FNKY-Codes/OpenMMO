@@ -118,6 +118,29 @@ impl Mat4 {
         out
     }
 
+    pub fn translation(x: f32, y: f32, z: f32) -> Self {
+        let mut m = Self::identity();
+        m.cols[3][0] = x;
+        m.cols[3][1] = y;
+        m.cols[3][2] = z;
+        m
+    }
+
+    pub fn scale(x: f32, y: f32, z: f32) -> Self {
+        Self {
+            cols: [
+                [x, 0.0, 0.0, 0.0],
+                [0.0, y, 0.0, 0.0],
+                [0.0, 0.0, z, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
+    pub fn from_gltf(m: [[f32; 4]; 4]) -> Self {
+        Self { cols: m }
+    }
+
     pub fn transform_point(self, p: Vec3) -> (Vec3, f32) {
         let x =
             self.cols[0][0] * p.x + self.cols[1][0] * p.y + self.cols[2][0] * p.z + self.cols[3][0];

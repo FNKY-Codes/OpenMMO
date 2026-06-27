@@ -7,6 +7,7 @@ use openmmo_common::{EntityId, RegionDef, TilePos, WorldEntity};
 use crate::camera::Camera;
 use crate::entity_bounds;
 use crate::math::Vec3;
+use crate::model::{load_player_model, player_model_matrix, PlayerDraw, PlayerModel};
 use crate::movement_interp::EntityMovementInterp;
 
 #[repr(C)]
@@ -71,10 +72,15 @@ pub struct Renderer {
     scratch_transparent_outline_vertices: Vec<Vertex>,
     scratch_transparent_draws: Vec<TransparentDraw>,
     scratch_upload: Vec<Vertex>,
+    player_model: Option<PlayerModel>,
+    scratch_player_draws: Vec<PlayerDraw>,
 }
 
 impl Renderer {
-    pub async fn new(window: std::sync::Arc<egui_winit::winit::window::Window>) -> Self {
+    pub async fn new(
+        window: std::sync::Arc<egui_winit::winit::window::Window>,
+        player_model_path: Option<&std::path::Path>,
+    ) -> Self {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
@@ -311,6 +317,19 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
+        let player_model = player_model_path.and_then(|path| {
+            match load_player_model(&device, &queue, format, path) {
+                Ok(model) => {
+                    tracing::info!(?path, "loaded player model");
+                    Some(model)
+                }
+                Err(err) => {
+                    tracing::warn!(?path, %err, "failed to load player model");
+                    None
+                }
+            }
+        });
+
         Self {
             window,
             gpu: GpuState {
@@ -336,6 +355,8 @@ impl Renderer {
             scratch_transparent_outline_vertices: Vec::with_capacity(512),
             scratch_transparent_draws: Vec::with_capacity(64),
             scratch_upload: Vec::with_capacity(8192),
+            player_model,
+            scratch_player_draws: Vec::with_capacity(16),
         }
     }
 
@@ -473,11 +494,15 @@ impl Renderer {
         let mut transparent_outline_vertices =
             std::mem::take(&mut self.scratch_transparent_outline_vertices);
         let mut transparent_draws = std::mem::take(&mut self.scratch_transparent_draws);
+        let mut player_draws = std::mem::take(&mut self.scratch_player_draws);
         opaque_entity_vertices.clear();
         opaque_outline_vertices.clear();
         transparent_entity_vertices.clear();
         transparent_outline_vertices.clear();
         transparent_draws.clear();
+        player_draws.clear();
+
+        let use_player_model = self.player_model.is_some();
 
         let now = Instant::now();
         let mut local_entity = None;
@@ -501,6 +526,8 @@ impl Renderer {
                     &mut transparent_entity_vertices,
                     &mut transparent_outline_vertices,
                     &mut transparent_draws,
+                    &mut player_draws,
+                    use_player_model,
                     local_player,
                 );
             }
@@ -517,6 +544,8 @@ impl Renderer {
                 &mut transparent_entity_vertices,
                 &mut transparent_outline_vertices,
                 &mut transparent_draws,
+                &mut player_draws,
+                use_player_model,
                 local_player,
             );
         }
@@ -556,6 +585,7 @@ impl Renderer {
         self.scratch_transparent_entity_vertices = transparent_entity_vertices;
         self.scratch_transparent_outline_vertices = transparent_outline_vertices;
         self.scratch_transparent_draws = transparent_draws;
+        self.scratch_player_draws = player_draws;
 
         if !self.scratch_upload.is_empty() {
             let byte_offset =
@@ -600,6 +630,15 @@ impl Renderer {
             render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.draw(0..opaque_outline_base, 0..1);
+        }
+
+        if let Some(player_model) = &self.player_model {
+            player_model.draw_instances(
+                &mut render_pass,
+                &self.gpu.queue,
+                vp,
+                &self.scratch_player_draws,
+            );
         }
 
         if opaque_outline_count > 0 {
@@ -743,6 +782,8 @@ impl Renderer {
         transparent_entity_vertices: &mut Vec<Vertex>,
         transparent_outline_vertices: &mut Vec<Vertex>,
         transparent_draws: &mut Vec<TransparentDraw>,
+        player_draws: &mut Vec<PlayerDraw>,
+        use_player_model: bool,
         local_player: Option<openmmo_common::PlayerId>,
     ) {
         let visual_base = movement_interp
@@ -763,6 +804,20 @@ impl Renderer {
                 let Some([cx, surface_y, cz]) = visual_base else {
                     return;
                 };
+                if use_player_model {
+                    if let Some(model) = &self.player_model {
+                        let tint = if Some(*player_id) == local_player {
+                            [1.0, 1.0, 1.0, 1.0]
+                        } else {
+                            [0.95, 0.9, 0.75, 1.0]
+                        };
+                        player_draws.push(PlayerDraw {
+                            model: player_model_matrix([cx, surface_y, cz], model),
+                            tint,
+                        });
+                        return;
+                    }
+                }
                 let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 let color = if Some(*player_id) == local_player {
                     [0.2, 0.6, 1.0, 1.0]

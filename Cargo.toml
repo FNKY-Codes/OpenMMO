@@ -50,6 +50,8 @@ tokio-tungstenite = "0.23"
 url = "2"
 toml = "0.8"
 openmmo-sdk = { path = "crates/sdk" }
+gltf = "1"
+image = "0.25"
 
 [profile.dev]
 opt-level = 1
