@@ -81,6 +81,7 @@ pub struct NpcState {
     pub npc_id: NpcId,
     pub name: String,
     pub position: TilePos,
+    pub home_position: TilePos,
     pub hp: u32,
     pub max_hp: u32,
     pub prowess: u32,

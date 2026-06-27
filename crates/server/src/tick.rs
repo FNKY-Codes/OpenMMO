@@ -1052,6 +1052,7 @@ fn tick_npc_respawn(world: &mut GameWorld) {
                     npc.alive = true;
                     npc.hp = def.max_hp;
                     npc.aggro_target = None;
+                    npc.position = npc.home_position;
                 }
             }
         }
@@ -1345,14 +1346,38 @@ fn handle_shop_buy(
     vec![inventory_update(player)]
 }
 
+fn move_npc_toward(world: &mut GameWorld, entity_id: EntityId, from: TilePos, to: TilePos) -> bool {
+    if from == to {
+        return false;
+    }
+    let dx = (to.x - from.x).clamp(-1, 1);
+    let dy = (to.y - from.y).clamp(-1, 1);
+    let next = TilePos::new(from.x + dx, from.y + dy);
+    if !world.is_walkable(next) {
+        return false;
+    }
+    if let Some(npc) = world.npcs.get_mut(&entity_id) {
+        npc.position = next;
+    }
+    true
+}
+
 fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerMessage)>) {
     let npc_snapshots: Vec<_> = world
         .npcs
         .iter()
         .filter(|(_, n)| n.alive)
-        .map(|(eid, n)| (*eid, n.npc_id, n.position, n.aggro_target))
+        .map(|(eid, n)| {
+            (
+                *eid,
+                n.npc_id,
+                n.position,
+                n.home_position,
+                n.aggro_target,
+            )
+        })
         .collect();
-    for (entity_id, npc_id, mut npc_pos, aggro_target) in npc_snapshots {
+    for (entity_id, npc_id, npc_pos, home_pos, aggro_target) in npc_snapshots {
         let def = match world.content.npc(npc_id) {
             Some(d) => d.clone(),
             None => continue,
@@ -1360,7 +1385,12 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
         if def.aggro_range == 0 {
             continue;
         }
-        let mut target_player = aggro_target;
+        let mut target_player = aggro_target.filter(|pid| world.players.contains_key(pid));
+        if target_player.is_none() && aggro_target.is_some() {
+            if let Some(npc) = world.npcs.get_mut(&entity_id) {
+                npc.aggro_target = None;
+            }
+        }
         if target_player.is_none() {
             for (pid, player) in &world.players {
                 if player.position.chebyshev_distance(&npc_pos) <= def.aggro_range {
@@ -1369,48 +1399,44 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                 }
             }
         }
-        let Some(target_pid) = target_player else {
+        if let Some(target_pid) = target_player {
+            if let Some(npc) = world.npcs.get_mut(&entity_id) {
+                npc.aggro_target = Some(target_pid);
+            }
+            let player_pos = world
+                .players
+                .get(&target_pid)
+                .map(|p| p.position)
+                .unwrap_or(npc_pos);
+            if npc_pos.chebyshev_distance(&player_pos) > 1 {
+                move_npc_toward(world, entity_id, npc_pos, player_pos);
+            } else if let (Some(npc), Some(player)) = (
+                world.npcs.get(&entity_id),
+                world.players.get_mut(&target_pid),
+            ) {
+                let content = world.content.clone();
+                let player_eid = player.entity_id;
+                if let Some(dmg) = crate::combat::npc_attack_player(npc, player, &content) {
+                    messages.push((
+                        MessageTarget::Player(target_pid),
+                        ServerMessage::Damage {
+                            source: entity_id,
+                            target: player_eid,
+                            amount: dmg,
+                            style: openmmo_common::CombatStyle::Melee,
+                        },
+                    ));
+                    if player.hp == 0 {
+                        drop(player);
+                        respawn_player(world, target_pid, messages);
+                    }
+                }
+            }
             continue;
-        };
-        if let Some(npc) = world.npcs.get_mut(&entity_id) {
-            npc.aggro_target = Some(target_pid);
         }
-        let player_pos = world
-            .players
-            .get(&target_pid)
-            .map(|p| p.position)
-            .unwrap_or(npc_pos);
-        if npc_pos.chebyshev_distance(&player_pos) > 1 {
-            let dx = (player_pos.x - npc_pos.x).clamp(-1, 1);
-            let dy = (player_pos.y - npc_pos.y).clamp(-1, 1);
-            let next = TilePos::new(npc_pos.x + dx, npc_pos.y + dy);
-            if world.is_walkable(next) {
-                npc_pos = next;
-                if let Some(npc) = world.npcs.get_mut(&entity_id) {
-                    npc.position = next;
-                }
-            }
-        } else if let (Some(npc), Some(player)) = (
-            world.npcs.get(&entity_id),
-            world.players.get_mut(&target_pid),
-        ) {
-            let content = world.content.clone();
-            let player_eid = player.entity_id;
-            if let Some(dmg) = crate::combat::npc_attack_player(npc, player, &content) {
-                messages.push((
-                    MessageTarget::Player(target_pid),
-                    ServerMessage::Damage {
-                        source: entity_id,
-                        target: player_eid,
-                        amount: dmg,
-                        style: openmmo_common::CombatStyle::Melee,
-                    },
-                ));
-                if player.hp == 0 {
-                    drop(player);
-                    respawn_player(world, target_pid, messages);
-                }
-            }
+
+        if npc_pos != home_pos {
+            move_npc_toward(world, entity_id, npc_pos, home_pos);
         }
     }
 }
@@ -1557,5 +1583,87 @@ mod routing_tests {
         };
         assert!(!path.contains(&TilePos::new(6, 5)));
         assert_eq!(*path.last().unwrap(), TilePos::new(7, 5));
+    }
+
+    #[test]
+    fn npc_returns_home_after_combat() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content);
+
+        let entity_id = world
+            .npcs
+            .iter()
+            .find(|(_, n)| {
+                world
+                    .content
+                    .npc(n.npc_id)
+                    .map(|d| d.aggro_range > 0)
+                    .unwrap_or(false)
+            })
+            .map(|(eid, _)| *eid)
+            .expect("hostile npc");
+
+        let home = world.npcs.get(&entity_id).unwrap().home_position;
+        {
+            let npc = world.npcs.get_mut(&entity_id).unwrap();
+            npc.position = TilePos::new(home.x + 5, home.y + 5);
+            npc.aggro_target = Some(PlayerId(Uuid::from_u128(99)));
+        }
+
+        let start_dist = world
+            .npcs
+            .get(&entity_id)
+            .unwrap()
+            .position
+            .chebyshev_distance(&home);
+        process_tick(&mut world);
+        let after_one = world.npcs.get(&entity_id).unwrap().position;
+        assert!(
+            after_one.chebyshev_distance(&home) < start_dist,
+            "npc should move toward home after combat ends"
+        );
+
+        for _ in 0..20 {
+            process_tick(&mut world);
+            if world.npcs.get(&entity_id).unwrap().position == home {
+                break;
+            }
+        }
+        assert_eq!(world.npcs.get(&entity_id).unwrap().position, home);
+    }
+
+    #[test]
+    fn npc_respawns_at_home_tile() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content);
+
+        let entity_id = world
+            .npcs
+            .iter()
+            .find(|(_, n)| {
+                world
+                    .content
+                    .npc(n.npc_id)
+                    .map(|d| d.aggro_range > 0)
+                    .unwrap_or(false)
+            })
+            .map(|(eid, _)| *eid)
+            .expect("hostile npc");
+
+        let home = world.npcs.get(&entity_id).unwrap().home_position;
+        {
+            let npc = world.npcs.get_mut(&entity_id).unwrap();
+            npc.position = TilePos::new(home.x + 5, home.y + 5);
+            npc.alive = false;
+            npc.hp = 0;
+            npc.respawn_ticks = 1;
+        }
+
+        process_tick(&mut world);
+        let npc = world.npcs.get(&entity_id).unwrap();
+        assert!(npc.alive);
+        assert_eq!(npc.position, home);
     }
 }
