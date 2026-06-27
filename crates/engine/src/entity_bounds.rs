@@ -1,12 +1,21 @@
-use openmmo_common::{EntityKind, RegionDef, TilePos, WorldEntity};
-use std::sync::OnceLock;
+use openmmo_common::{EntityKind, NpcId, RegionDef, TilePos, WorldEntity};
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use crate::math::Vec3;
 
 static PLAYER_MODEL_DIMS: OnceLock<(f32, f32)> = OnceLock::new();
+static NPC_MODEL_DIMS: LazyLock<Mutex<HashMap<NpcId, (f32, f32)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn set_player_model_dims(width: f32, height: f32) {
     let _ = PLAYER_MODEL_DIMS.set((width, height));
+}
+
+pub fn set_npc_model_dims(npc_id: NpcId, width: f32, height: f32) {
+    if let Ok(mut dims) = NPC_MODEL_DIMS.lock() {
+        dims.insert(npc_id, (width, height));
+    }
 }
 
 pub fn entity_cube_dims(kind: &EntityKind) -> (f32, f32) {
@@ -14,7 +23,11 @@ pub fn entity_cube_dims(kind: &EntityKind) -> (f32, f32) {
         EntityKind::Player { .. } => {
             PLAYER_MODEL_DIMS.get().copied().unwrap_or((0.9, 1.8))
         }
-        EntityKind::Npc { .. } => (0.8, 1.6),
+        EntityKind::Npc { npc_id, .. } => NPC_MODEL_DIMS
+            .lock()
+            .ok()
+            .and_then(|dims| dims.get(npc_id).copied())
+            .unwrap_or((0.8, 1.6)),
         EntityKind::Boss { .. } => (1.4, 3.0),
         EntityKind::Object { .. } => (0.7, 1.2),
         EntityKind::GroundItem { .. } => (0.35, 0.35),
