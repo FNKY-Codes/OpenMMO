@@ -454,7 +454,6 @@ impl Renderer {
         entities: &[WorldEntity],
         local_player: Option<openmmo_common::PlayerId>,
         movement_interp: &EntityMovementInterp,
-        local_facing_yaw: Option<f32>,
         hover: Option<HoverTarget>,
     ) {
         let vp = self
@@ -535,7 +534,6 @@ impl Renderer {
                     &mut player_draws,
                     use_player_model,
                     local_player,
-                    local_facing_yaw,
                 );
             }
         }
@@ -554,7 +552,6 @@ impl Renderer {
                 &mut player_draws,
                 use_player_model,
                 local_player,
-                local_facing_yaw,
             );
         }
 
@@ -793,7 +790,6 @@ impl Renderer {
         player_draws: &mut Vec<PlayerDraw>,
         use_player_model: bool,
         local_player: Option<openmmo_common::PlayerId>,
-        local_facing_yaw: Option<f32>,
     ) {
         let visual_base = movement_interp
             .visual_center(entity.entity_id, now, region)
@@ -815,14 +811,9 @@ impl Renderer {
                 };
                 if use_player_model && self.player_model.is_some() {
                         let is_local = Some(*player_id) == local_player;
-                        let mut yaw = movement_interp
+                        let yaw = movement_interp
                             .visual_facing_yaw(entity.entity_id, now)
                             .unwrap_or(0.0);
-                        if is_local && !movement_interp.is_moving(entity.entity_id, now) {
-                            if let Some(cam_yaw) = local_facing_yaw {
-                                yaw = cam_yaw;
-                            }
-                        }
                         let tint = if is_local {
                             [1.0, 1.0, 1.0, 1.0]
                         } else {
