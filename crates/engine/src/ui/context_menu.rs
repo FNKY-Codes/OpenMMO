@@ -212,6 +212,7 @@ mod tests {
                 stackable: true,
                 equip_slot: None,
                 prowess_bonus: 0,
+                electrics_bonus: 0,
                 fortitude_bonus: 0,
                 tool_tag: None,
                 alchemy_value: 0,

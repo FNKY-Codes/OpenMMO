@@ -188,6 +188,8 @@ pub struct BossState {
     pub position: TilePos,
     pub hp: u32,
     pub max_hp: u32,
+    pub prowess: u32,
+    pub fortitude: u32,
     pub phase: u32,
     pub mechanics_active: Vec<String>,
 }

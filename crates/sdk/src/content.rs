@@ -9,6 +9,8 @@ pub struct ItemDef {
     pub stackable: bool,
     pub equip_slot: Option<EquipSlot>,
     pub prowess_bonus: i32,
+    #[serde(default)]
+    pub electrics_bonus: i32,
     pub fortitude_bonus: i32,
     pub tool_tag: Option<crate::ToolTag>,
     pub alchemy_value: u32,
