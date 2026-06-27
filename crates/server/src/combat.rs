@@ -60,6 +60,7 @@ pub fn apply_damage_npc(npc: &mut NpcState, amount: u32) {
     if npc.hp == 0 {
         npc.alive = false;
         npc.respawn_ticks = npc.respawn_ticks.max(10);
+        npc.aggro_target = None;
     }
 }
 

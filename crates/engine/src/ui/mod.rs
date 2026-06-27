@@ -3,11 +3,18 @@ mod side_panel;
 mod theme;
 mod widgets;
 
+use std::time::Instant;
+
 use egui::{Context, RichText};
 use openmmo_common::{
-    ContentPack, DialogueNode, Equipment, Inventory, ItemId, SkillBook,
+    ContentPack, DialogueNode, EntityId, EntityKind, Equipment, Inventory, ItemId, RegionDef,
+    SkillBook, WorldEntity,
 };
 use openmmo_protocol::LedgerContract;
+
+use crate::entity_bounds;
+use crate::math::{self, Vec3};
+use crate::movement_interp::EntityMovementInterp;
 
 pub use context_menu::{build_context_menu, to_client_message, ContextMenu, ContextMenuAction};
 pub use theme::setup_theme;
@@ -292,6 +299,71 @@ impl GameUi {
 
         action
     }
+}
+
+pub fn draw_combat_health_bars(
+    ctx: &Context,
+    entity_ids: &[EntityId],
+    entities: &[WorldEntity],
+    movement_interp: &EntityMovementInterp,
+    region: Option<&RegionDef>,
+    view_proj: math::Mat4,
+    width: u32,
+    height: u32,
+    pixels_per_point: f32,
+    now: Instant,
+) {
+    let width_f = width as f32;
+    let height_f = height as f32;
+    let bar_width = 52.0;
+
+    for entity_id in entity_ids {
+        let Some(entity) = entities.iter().find(|e| e.entity_id == *entity_id) else {
+            continue;
+        };
+        let Some((hp, max_hp)) = entity_hp(entity) else {
+            continue;
+        };
+        let Some(anchor) = entity_health_anchor(entity, movement_interp, region, now) else {
+            continue;
+        };
+        let Some((screen_x, screen_y)) =
+            math::world_to_screen(anchor, view_proj, width_f, height_f)
+        else {
+            continue;
+        };
+
+        let pos = egui::pos2(
+            screen_x / pixels_per_point - bar_width * 0.5,
+            screen_y / pixels_per_point - 10.0,
+        );
+        egui::Area::new(egui::Id::new(("combat_hp", entity_id.0)))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                widgets::world_hp_bar(ui, hp, max_hp);
+            });
+    }
+}
+
+fn entity_hp(entity: &WorldEntity) -> Option<(u32, u32)> {
+    match &entity.kind {
+        EntityKind::Player { hp, max_hp, .. }
+        | EntityKind::Npc { hp, max_hp, .. }
+        | EntityKind::Boss { hp, max_hp, .. } => Some((*hp, *max_hp)),
+        _ => None,
+    }
+}
+
+fn entity_health_anchor(
+    entity: &WorldEntity,
+    movement_interp: &EntityMovementInterp,
+    region: Option<&RegionDef>,
+    now: Instant,
+) -> Option<Vec3> {
+    let (_, height) = entity_bounds::entity_cube_dims(&entity.kind);
+    let [cx, surface_y, cz] = movement_interp.visual_center(entity.entity_id, now, region)?;
+    Some(Vec3::new(cx, surface_y + height + 0.15, cz))
 }
 
 #[derive(Debug, Clone)]

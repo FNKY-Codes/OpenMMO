@@ -15,7 +15,7 @@ use crate::{
     input::InputState,
     movement_interp::EntityMovementInterp,
     renderer::Renderer,
-    ui::{build_context_menu, setup_theme, to_client_message, GameUi, UiAction},
+    ui::{build_context_menu, draw_combat_health_bars, setup_theme, to_client_message, GameUi, UiAction},
 };
 
 #[derive(Debug)]
@@ -43,6 +43,7 @@ pub struct EngineApp {
     pub hp: u32,
     pub max_hp: u32,
     pub quest_text: Vec<(String, String)>,
+    pub combat_opponent: Option<openmmo_common::EntityId>,
     pub net_tx: Option<Sender<NetCommand>>,
     pub net_rx: Option<Receiver<ServerMessage>>,
 }
@@ -64,6 +65,7 @@ impl Default for EngineApp {
             hp: 10,
             max_hp: 10,
             quest_text: Vec::new(),
+            combat_opponent: None,
             net_tx: None,
             net_rx: None,
         }
@@ -197,7 +199,16 @@ impl EngineApp {
         }
     }
 
-    fn send(&self, msg: ClientMessage) {
+    fn send(&mut self, msg: ClientMessage) {
+        match &msg {
+            ClientMessage::Attack { target, .. } | ClientMessage::CastSpell { target, .. } => {
+                self.combat_opponent = Some(*target);
+            }
+            ClientMessage::WalkIntent { .. } => {
+                self.combat_opponent = None;
+            }
+            _ => {}
+        }
         if let Some(tx) = &self.net_tx {
             let _ = tx.send(NetCommand::Send(msg));
         }
@@ -299,10 +310,23 @@ impl EngineApp {
                     "Damage: {:?} -> {:?} ({amount})",
                     source.0, target.0
                 ));
+                if let Some(local_eid) = self.local_entity_id() {
+                    if source == local_eid {
+                        self.combat_opponent = Some(target);
+                    } else if target == local_eid {
+                        self.combat_opponent = Some(source);
+                    }
+                }
                 self.sync_local_hp();
             }
             ServerMessage::Death { entity, .. } => {
                 self.ui.combat_log.push(format!("Entity {} died", entity.0));
+                if self.combat_opponent == Some(entity) {
+                    self.combat_opponent = None;
+                }
+                if self.local_entity_id() == Some(entity) {
+                    self.combat_opponent = None;
+                }
                 self.movement_interp.remove(entity);
                 self.entities.retain(|e| e.entity_id != entity);
             }
@@ -391,6 +415,17 @@ impl EngineApp {
         }
         self.entities.retain(|e| ids.contains(&e.entity_id));
         self.movement_interp.prune(&ids);
+    }
+
+    fn local_entity_id(&self) -> Option<openmmo_common::EntityId> {
+        let lp = self.local_player?;
+        self.entities.iter().find_map(|entity| {
+            if let EntityKind::Player { player_id, .. } = &entity.kind {
+                (*player_id == lp).then_some(entity.entity_id)
+            } else {
+                None
+            }
+        })
     }
 
     fn sync_local_hp(&mut self) {
@@ -536,6 +571,31 @@ impl EngineApp {
                     self.max_hp,
                     &self.quest_text,
                 );
+
+                if let Some(opponent) = self.combat_opponent {
+                    let mut combatants = Vec::new();
+                    if let Some(local_eid) = self.local_entity_id() {
+                        combatants.push(local_eid);
+                    }
+                    combatants.push(opponent);
+                    let camera = renderer.camera();
+                    let vp = camera.view_projection(
+                        renderer.gpu().config.width,
+                        renderer.gpu().config.height,
+                    );
+                    draw_combat_health_bars(
+                        ctx,
+                        &combatants,
+                        &self.entities,
+                        &self.movement_interp,
+                        self.region.as_ref(),
+                        vp,
+                        renderer.gpu().config.width,
+                        renderer.gpu().config.height,
+                        window.scale_factor() as f32,
+                        Instant::now(),
+                    );
+                }
             }
         });
 
