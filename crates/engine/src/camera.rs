@@ -117,18 +117,20 @@ impl Camera {
             inv_vp,
         );
         let hit = math::ray_plane_y_intersection(origin, dir)?;
+        let hit_tile = TilePos::new(hit.x.floor() as i32, hit.z.floor() as i32);
         let mut best: Option<(openmmo_common::EntityId, f32)> = None;
         for entity in entities {
             let pos = entity_tile(entity)?;
+            if pos != hit_tile {
+                continue;
+            }
             let cx = pos.x as f32 + 0.5;
             let cz = pos.y as f32 + 0.5;
             let dx = hit.x - cx;
             let dz = hit.z - cz;
             let dist = (dx * dx + dz * dz).sqrt();
-            if dist <= 1.2 {
-                if best.is_none() || dist < best.unwrap().1 {
-                    best = Some((entity.entity_id, dist));
-                }
+            if best.is_none() || dist < best.unwrap().1 {
+                best = Some((entity.entity_id, dist));
             }
         }
         best.map(|(id, _)| id)
