@@ -6,6 +6,7 @@ mod minigame;
 mod pathfinding;
 mod persistence;
 mod quest;
+mod session;
 mod social;
 mod state;
 mod tick;

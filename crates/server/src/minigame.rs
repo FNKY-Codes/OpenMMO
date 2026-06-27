@@ -42,6 +42,8 @@ pub fn spawn_boss(world: &mut GameWorld) {
         fortitude: 8,
         phase: 1,
         mechanics_active: vec!["ground_slam".into()],
+        attack_ticks: 5,
+        attack_cooldown: 0,
     });
     world.minigames.active_wave = 1;
 }

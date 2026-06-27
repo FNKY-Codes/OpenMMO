@@ -6,3 +6,4 @@ prowess_bonus: 5
 fortitude_bonus: 0
 tool_tag: null
 alchemy_value: 40
+attack_ticks: 4

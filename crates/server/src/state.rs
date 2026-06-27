@@ -119,6 +119,7 @@ impl GameWorld {
                 aggro_target: None,
                 respawn_ticks: 0,
                 alive: true,
+                attack_cooldown: 0,
             },
         );
         eid

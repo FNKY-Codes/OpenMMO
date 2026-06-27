@@ -24,7 +24,10 @@ rand = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 sqlx = { workspace = true, optional = true }
+redis = { workspace = true, optional = true }
+sha2 = { workspace = true }
 
 [features]
 default = []
 postgres = ["dep:sqlx"]
+redis = ["dep:redis"]

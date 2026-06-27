@@ -5,6 +5,7 @@ prowess: 4
 fortitude: 2
 aggro_range: 4
 respawn_ticks: 20
+attack_ticks: 3
 loot_table:
   - item_id: 1
     min_qty: 1

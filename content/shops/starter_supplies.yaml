@@ -11,3 +11,6 @@ stock:
   - item_id: 7
     price: 5
     quantity: 20
+  - item_id: 11
+    price: 12
+    quantity: 5
