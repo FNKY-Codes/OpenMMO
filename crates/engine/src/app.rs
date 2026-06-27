@@ -12,7 +12,7 @@ use egui_winit::egui;
 use crate::{
     input::InputState,
     renderer::Renderer,
-    ui::{setup_theme, GameUi, UiAction},
+    ui::{build_context_menu, setup_theme, to_client_message, GameUi, UiAction},
 };
 
 #[derive(Debug)]
@@ -124,6 +124,12 @@ impl EngineApp {
                                         winit::event::MouseButton::Left,
                                     ) => {
                                         self.input.left_clicked = true;
+                                    }
+                                    (
+                                        winit::event::ElementState::Pressed,
+                                        winit::event::MouseButton::Right,
+                                    ) => {
+                                        self.input.right_clicked = true;
                                     }
                                     (
                                         winit::event::ElementState::Pressed,
@@ -615,12 +621,48 @@ impl EngineApp {
             UiAction::JoinMinigame { minigame_id } => {
                 self.send(ClientMessage::JoinMinigame { minigame_id });
             }
+            UiAction::ContextMenu(menu_action) => {
+                self.send(to_client_message(menu_action));
+            }
             UiAction::Connect => {}
             UiAction::None => {}
         }
 
+        let pixels_per_point = window.scale_factor() as f32;
+
+        if self.ui.connected && self.input.right_clicked && !egui_ctx.wants_pointer_input() {
+            self.input.right_clicked = false;
+            let width = renderer.gpu().config.width;
+            let height = renderer.gpu().config.height;
+            let tile = self
+                .input
+                .tile_under_cursor(renderer.camera(), width, height);
+            if let Some(tile) = tile {
+                let entity_id = self.input.entity_under_cursor(
+                    renderer.camera(),
+                    width,
+                    height,
+                    &self.entities,
+                );
+                let screen_pos =
+                    egui::pos2(self.input.mouse_x / pixels_per_point, self.input.mouse_y / pixels_per_point);
+                self.ui.context_menu = build_context_menu(
+                    &self.content,
+                    self.region.as_ref(),
+                    &self.entities,
+                    self.local_player,
+                    entity_id,
+                    tile,
+                    screen_pos,
+                );
+            }
+        } else if self.input.right_clicked {
+            self.input.right_clicked = false;
+        }
+
         if self.ui.connected && self.input.left_clicked {
             self.input.left_clicked = false;
+            self.ui.context_menu = None;
             let width = renderer.gpu().config.width;
             let height = renderer.gpu().config.height;
             let tile = self
@@ -648,7 +690,6 @@ impl EngineApp {
 
         egui_state.handle_platform_output(window, full_output.platform_output);
 
-        let pixels_per_point = window.scale_factor() as f32;
         let screen_desc = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [renderer.gpu().config.width, renderer.gpu().config.height],
             pixels_per_point,

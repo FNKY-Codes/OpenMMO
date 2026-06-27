@@ -1,6 +1,7 @@
 use egui::{RichText, Ui};
 use openmmo_common::{
-    ContentPack, EquipSlot, Equipment, InventorySlot, ItemId, RefinementRecipe, Skill,
+    ContentPack, EntityKind, EquipSlot, Equipment, InventorySlot, ItemId, RefinementRecipe, Skill,
+    WorldEntity,
 };
 
 use super::theme::{self, ACCENT, TEXT_MUTED};
@@ -23,6 +24,36 @@ pub fn item_label(content: &ContentPack, slot: &InventorySlot) -> String {
 
 pub fn item_label_by_id(content: &ContentPack, item_id: ItemId, quantity: u32) -> String {
     format!("{} x{quantity}", item_name(content, item_id))
+}
+
+pub fn entity_display_name(content: &ContentPack, entity: &WorldEntity) -> (String, Option<String>) {
+    match &entity.kind {
+        EntityKind::Player { name, .. } => (name.clone(), Some("Player".into())),
+        EntityKind::Npc { name, aggro_range, .. } => {
+            let subtitle = if *aggro_range == 0 {
+                "NPC"
+            } else {
+                "Hostile NPC"
+            };
+            (name.clone(), Some(subtitle.into()))
+        }
+        EntityKind::Boss { name, .. } => (name.clone(), Some("Boss".into())),
+        EntityKind::Object { object_id, .. } => {
+            let title = content
+                .object(*object_id)
+                .map(|o| o.name.clone())
+                .unwrap_or_else(|| "Unknown Object".into());
+            (title, Some("Harvestable".into()))
+        }
+        EntityKind::GroundItem {
+            item_id,
+            quantity,
+            ..
+        } => (
+            item_label_by_id(content, *item_id, *quantity),
+            Some("Item".into()),
+        ),
+    }
 }
 
 pub fn tab_bar(ui: &mut Ui, active_tab: &mut Option<SidePanelTab>) {
