@@ -779,7 +779,9 @@ impl Renderer {
                                 continue;
                             }
                             let player = npc_animations.entry(entity_id).or_insert_with(|| {
-                                AnimationPlayer::new(PLAYER_IDLE)
+                                let mut player = AnimationPlayer::new(PLAYER_IDLE);
+                                player.play(PLAYER_IDLE, true);
+                                player
                             });
                             update_player_clip(player, movement_interp, entity_id, now);
                             player.advance(dt, &model.animations);
