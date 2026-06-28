@@ -588,14 +588,19 @@ fn skinned_bind_pose_bounds(vertices: &[SkinnedModelVertex]) -> ([f32; 3], [f32;
 
 fn skinned_footprint_matrix(
     vertices: &[SkinnedModelVertex],
-    _footprint_w: f32,
-    _footprint_h: f32,
+    footprint_w: f32,
+    footprint_h: f32,
     target_height: f32,
 ) -> Mat4 {
     let (min, max) = skinned_bind_pose_bounds(vertices);
+    let width_x = (max[0] - min[0]).max(0.01);
     let height_y = (max[1] - min[1]).max(0.01);
-    // Fit standing height, not the widest limb span — max-dim scaling squashes squat meshes.
-    let scale = target_height / height_y;
+    let depth_z = (max[2] - min[2]).max(0.01);
+    let horizontal = width_x.max(depth_z);
+    let footprint_span = footprint_w.min(footprint_h);
+    let scale_fit_footprint = footprint_span / horizontal;
+    let scale_fit_height = target_height / height_y;
+    let scale = scale_fit_footprint.min(scale_fit_height);
 
     let center_x = (min[0] + max[0]) * 0.5;
     let center_z = (min[2] + max[2]) * 0.5;
@@ -1281,11 +1286,13 @@ mod tests {
     }
 
     #[test]
-    fn frog_footprint_matrix_preserves_proportions() {
+    fn frog_footprint_matrix_fits_one_tile() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/Frog.glb");
         let (mesh, _, _) = load_skinned_mesh_data(&path).expect("load frog mesh");
-        let target_height = 1.6;
-        let matrix = skinned_footprint_matrix(&mesh.vertices, 1.0, 1.0, target_height);
+        let footprint_w = 1.0;
+        let footprint_h = 1.0;
+        let matrix =
+            skinned_footprint_matrix(&mesh.vertices, footprint_w, footprint_h, TARGET_NPC_HEIGHT);
 
         let (min_raw, max_raw) = skinned_bind_pose_bounds(&mesh.vertices);
         let raw_size = [
@@ -1311,9 +1318,8 @@ mod tests {
 
         assert!(min[1].abs() < 1e-3, "feet should rest on y=0");
         assert!(
-            (fitted_size[1] - target_height).abs() < 0.05,
-            "height should match target (got {})",
-            fitted_size[1]
+            fitted_size[0] <= footprint_w + 0.02 && fitted_size[2] <= footprint_h + 0.02,
+            "frog should fit 1x1 footprint, got size {fitted_size:?}"
         );
         assert!(
             (raw_aspect_xz - fitted_aspect_xz).abs() < 0.02,
@@ -1347,12 +1353,11 @@ mod tests {
             }
         }
         let size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
-        eprintln!("idle fitted size xyz = {:?}", size);
-        assert!(size[1] > 1.2, "frog should stand near NPC height, got y={}", size[1]);
         assert!(
-            size[1] >= size[0].min(size[2]) * 0.35,
-            "frog should not look flattened: size={size:?}"
+            size[0] <= 1.05 && size[2] <= 1.05,
+            "idle frog should stay within one tile, got size {size:?}"
         );
+        assert!(size[1] > 0.2, "frog should have visible height, got y={}", size[1]);
     }
 
     #[test]
