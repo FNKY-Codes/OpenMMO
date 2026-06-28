@@ -273,10 +273,15 @@ impl GameWorld {
     }
 
     pub fn try_region_transition(&mut self, player_id: PlayerId) -> Option<openmmo_protocol::ServerMessage> {
-        let (region_id, position) = {
+        let (region_id, position, in_combat) = {
             let player = self.players.get(&player_id)?;
-            (player.region_id, player.position)
+            let in_combat = matches!(player.action, PlayerAction::Combat { .. })
+                || player.combat_target.is_some();
+            (player.region_id, player.position, in_combat)
         };
+        if in_combat {
+            return None;
+        }
         let region = self.regions.get(&region_id)?;
         let transition = region.transitions.iter().find(|t| {
             t.position.x == position.x
@@ -437,5 +442,52 @@ mod tests {
         let player = world.players.get(&pid).unwrap();
         assert_eq!(player.region_id, RegionId(2));
         assert_eq!(player.position, TilePos::new(1, 1));
+    }
+
+    #[test]
+    fn region_transition_blocked_during_combat() {
+        let mut pack = ContentPack::default();
+        pack.regions = vec![
+            RegionDef {
+                id: RegionId(1),
+                name: "A".into(),
+                width: 5,
+                height: 5,
+                spawn: TilePos::new(0, 0),
+                tiles: vec![0; 25],
+                objects: vec![],
+                npcs: vec![],
+                transitions: vec![],
+            },
+            RegionDef {
+                id: RegionId(2),
+                name: "B".into(),
+                width: 5,
+                height: 5,
+                spawn: TilePos::new(0, 0),
+                tiles: vec![0; 25],
+                objects: vec![],
+                npcs: vec![],
+                transitions: vec![RegionTransition {
+                    position: TilePos::new(0, 2),
+                    target_region: RegionId(1),
+                    target_spawn: TilePos::new(4, 2),
+                }],
+            },
+        ];
+        let mut world = GameWorld::new(pack);
+        let pid = world.add_player("Traveler".into());
+        if let Some(player) = world.players.get_mut(&pid) {
+            player.region_id = RegionId(2);
+            player.position = TilePos::new(0, 2);
+            player.action = PlayerAction::Combat {
+                target: EntityId(1),
+                style: openmmo_common::CombatStyle::Melee,
+                player_attack_cooldown: 0,
+            };
+            player.combat_target = Some(EntityId(1));
+        }
+        assert!(world.try_region_transition(pid).is_none());
+        assert_eq!(world.players.get(&pid).unwrap().region_id, RegionId(2));
     }
 }

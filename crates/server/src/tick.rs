@@ -143,6 +143,7 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
             messages.push((MessageTarget::Player(pid), msg));
         }
         if let Some(msg) = world.try_region_transition(pid) {
+            clear_npc_aggro_for_player(world, pid);
             messages.push((MessageTarget::Player(pid), msg));
         }
     }
@@ -410,13 +411,45 @@ fn npc_footprint(content: &ContentPack, npc_id: openmmo_common::NpcId) -> NpcFoo
         .unwrap_or_default()
 }
 
+fn target_in_player_region(
+    npcs: &std::collections::HashMap<EntityId, NpcState>,
+    boss: &Option<BossState>,
+    player_region: RegionId,
+    target: EntityId,
+) -> bool {
+    if let Some(npc) = npcs.get(&target) {
+        return npc.region_id == player_region;
+    }
+    if boss.as_ref().is_some_and(|b| b.entity_id == target) {
+        return true;
+    }
+    false
+}
+
+fn same_region_for_combat(world: &GameWorld, player_id: PlayerId, target: EntityId) -> bool {
+    let Some(player) = world.players.get(&player_id) else {
+        return false;
+    };
+    if !target_in_player_region(&world.npcs, &world.boss, player.region_id, target) {
+        return false;
+    }
+    if world.boss.as_ref().is_some_and(|b| b.entity_id == target) {
+        return world.minigames.arena_players.contains(&player_id);
+    }
+    true
+}
+
 fn player_in_melee_range(
     content: &ContentPack,
     npcs: &std::collections::HashMap<EntityId, NpcState>,
     boss: &Option<BossState>,
+    player_region: RegionId,
     player_pos: TilePos,
     target: EntityId,
 ) -> bool {
+    if !target_in_player_region(npcs, boss, player_region, target) {
+        return false;
+    }
     if let Some(npc) = npcs.get(&target) {
         if !npc.alive {
             return false;
@@ -515,7 +548,7 @@ fn try_begin_combat_from_walk(
     if walk_target != target {
         return;
     }
-    if !player_in_melee_range(content, npcs, boss, player.position, target) {
+    if !player_in_melee_range(content, npcs, boss, player.region_id, player.position, target) {
         return;
     }
     player.action = PlayerAction::Combat {
@@ -872,6 +905,11 @@ fn handle_attack(
             message: "Invalid attack target".into(),
         }];
     }
+    if !same_region_for_combat(world, player_id, target) {
+        return vec![ServerMessage::Error {
+            message: "Invalid attack target".into(),
+        }];
+    }
 
     let walkable = world.walkable_for_player(player_id);
     let content = &world.content;
@@ -887,8 +925,9 @@ fn handle_attack(
     }
 
     let player_pos = world.players.get(&player_id).expect("player").position;
+    let player_region = world.players.get(&player_id).expect("player").region_id;
 
-    if player_in_melee_range(content, npcs, boss, player_pos, target) {
+    if player_in_melee_range(content, npcs, boss, player_region, player_pos, target) {
         let player = world.players.get_mut(&player_id).expect("player");
         player.action = PlayerAction::Combat {
             target,
@@ -944,6 +983,11 @@ fn handle_spell(
     if player.skills.level(Skill::Electrics) < spell.electrics_level {
         return vec![ServerMessage::Error {
             message: format!("Need Electrics level {}", spell.electrics_level),
+        }];
+    }
+    if !same_region_for_combat(world, player_id, target) {
+        return vec![ServerMessage::Error {
+            message: "Invalid spell target".into(),
         }];
     }
     let _ = player;
@@ -1331,14 +1375,19 @@ fn tick_player_combat(
             .players
             .get(&pid)
             .zip(world.boss.as_ref())
-            .map(|(p, b)| p.position.chebyshev_distance(&b.position) <= 1)
+            .map(|(p, b)| {
+                world.minigames.arena_players.contains(&pid)
+                    && p.position.chebyshev_distance(&b.position) <= 1
+            })
             .unwrap_or(false)
     } else {
         world
             .players
             .get(&pid)
             .zip(world.npcs.get(&target))
-            .map(|(p, n)| n.alive && p.position.chebyshev_distance(&n.position) <= 1)
+            .map(|(p, n)| {
+                n.alive && n.region_id == p.region_id && p.position.chebyshev_distance(&n.position) <= 1
+            })
             .unwrap_or(false)
     };
 
@@ -1536,7 +1585,9 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                     .players
                     .get(&pid)
                     .zip(world.npcs.get(&target))
-                    .map(|(p, n)| p.position.chebyshev_distance(&n.position) <= 5)
+                    .map(|(p, n)| {
+                        n.region_id == p.region_id && p.position.chebyshev_distance(&n.position) <= 5
+                    })
                     .unwrap_or(false);
                 if !in_range {
                     continue;
@@ -1634,6 +1685,12 @@ fn respawn_player(
     player_id: PlayerId,
     messages: &mut Vec<(MessageTarget, ServerMessage)>,
 ) {
+    let respawn_region = world
+        .content
+        .regions
+        .first()
+        .map(|r| r.id)
+        .unwrap_or(RegionId(1));
     let spawn = world
         .content
         .regions
@@ -1648,11 +1705,21 @@ fn respawn_player(
                 killer: None,
             },
         ));
+        player.region_id = respawn_region;
         player.position = spawn;
+        player.last_position = spawn;
         player.hp = player.max_hp;
         player.action = PlayerAction::Idle;
         player.combat_target = None;
         clear_npc_aggro_for_player(world, player_id);
+        messages.push((
+            MessageTarget::Player(player_id),
+            ServerMessage::RegionChanged {
+                region_id: respawn_region,
+                position: spawn,
+                entities: world.entities_snapshot_for_region(Some(respawn_region)),
+            },
+        ));
     }
 }
 
@@ -2057,10 +2124,11 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                 n.position,
                 n.home_position,
                 n.aggro_target,
+                n.region_id,
             )
         })
         .collect();
-    for (entity_id, npc_id, npc_pos, home_pos, aggro_target) in npc_snapshots {
+    for (entity_id, npc_id, npc_pos, home_pos, aggro_target, npc_region_id) in npc_snapshots {
         let def = match world.content.npc(npc_id) {
             Some(d) => d.clone(),
             None => continue,
@@ -2069,7 +2137,12 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
             continue;
         }
         let fp = NpcFootprint::from_def(&def);
-        let mut target_player = aggro_target.filter(|pid| world.players.contains_key(pid));
+        let mut target_player = aggro_target.filter(|pid| {
+            world
+                .players
+                .get(pid)
+                .is_some_and(|p| p.region_id == npc_region_id)
+        });
         if target_player.is_none() && aggro_target.is_some() {
             if let Some(npc) = world.npcs.get_mut(&entity_id) {
                 npc.aggro_target = None;
@@ -2077,6 +2150,9 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
         }
         if target_player.is_none() {
             for (pid, player) in &world.players {
+                if player.region_id != npc_region_id {
+                    continue;
+                }
                 if fp.los_distance(player.position, npc_pos) <= def.aggro_range {
                     target_player = Some(*pid);
                     break;
@@ -2569,5 +2645,66 @@ mod routing_tests {
         let npc = world.npcs.get(&entity_id).unwrap();
         assert!(npc.alive);
         assert_eq!(npc.position, home);
+    }
+
+    #[test]
+    fn npc_does_not_aggro_player_in_other_region() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content);
+
+        let (entity_id, npc_pos, npc_region) = world
+            .npcs
+            .iter()
+            .find_map(|(eid, n)| {
+                world
+                    .content
+                    .npc(n.npc_id)
+                    .filter(|d| d.aggro_range > 0)
+                    .map(|_| (*eid, n.position, n.region_id))
+            })
+            .expect("hostile npc");
+
+        let pid = PlayerId(Uuid::from_u128(1));
+        let mut player = test_player(1);
+        player.region_id = RegionId(2);
+        player.position = TilePos::new(npc_pos.x, npc_pos.y);
+        player.last_position = player.position;
+        world.players.insert(pid, player);
+
+        process_tick(&mut world);
+
+        let npc = world.npcs.get(&entity_id).unwrap();
+        assert_ne!(npc.aggro_target, Some(pid));
+        assert_eq!(world.players.get(&pid).unwrap().region_id, RegionId(2));
+        assert_ne!(npc_region, RegionId(2));
+    }
+
+    #[test]
+    fn region_transition_blocked_during_combat() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content);
+
+        let pid = PlayerId(Uuid::from_u128(1));
+        let mut player = test_player(1);
+        player.region_id = RegionId(2);
+        player.position = TilePos::new(0, 7);
+        player.last_position = player.position;
+        player.action = PlayerAction::Combat {
+            target: EntityId(1),
+            style: openmmo_common::CombatStyle::Melee,
+            player_attack_cooldown: 0,
+        };
+        player.combat_target = Some(EntityId(1));
+        world.players.insert(pid, player);
+
+        let msgs = process_tick(&mut world);
+        let transitioned = msgs.iter().any(|(_, msg)| {
+            matches!(msg, ServerMessage::RegionChanged { .. })
+        });
+
+        assert!(!transitioned);
+        assert_eq!(world.players.get(&pid).unwrap().region_id, RegionId(2));
     }
 }
