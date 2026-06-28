@@ -578,11 +578,9 @@ fn skinned_footprint_matrix(
     target_height: f32,
 ) -> Mat4 {
     let (min, max) = skinned_bind_pose_bounds(vertices);
-    let width_x = (max[0] - min[0]).max(0.01);
     let height_y = (max[1] - min[1]).max(0.01);
-    let depth_z = (max[2] - min[2]).max(0.01);
-    let max_dim = width_x.max(height_y).max(depth_z);
-    let scale = target_height / max_dim;
+    // Fit standing height, not the widest limb span — max-dim scaling squashes squat meshes.
+    let scale = target_height / height_y;
 
     let center_x = (min[0] + max[0]) * 0.5;
     let center_z = (min[2] + max[2]) * 0.5;
@@ -1214,14 +1212,48 @@ mod tests {
         let fitted_aspect_xz = fitted_size[0] / fitted_size[2];
 
         assert!(min[1].abs() < 1e-3, "feet should rest on y=0");
-        let largest_dim = fitted_size[0].max(fitted_size[1]).max(fitted_size[2]);
         assert!(
-            (largest_dim - target_height).abs() < 0.05,
-            "largest dimension should match target height (got {largest_dim})"
+            (fitted_size[1] - target_height).abs() < 0.05,
+            "height should match target (got {})",
+            fitted_size[1]
         );
         assert!(
             (raw_aspect_xz - fitted_aspect_xz).abs() < 0.02,
             "uniform scale should preserve xz aspect ratio"
+        );
+    }
+
+    #[test]
+    fn frog_idle_skinned_bounds_stay_upright() {
+        use crate::animation::{AnimationPlayer, FROG_IDLE};
+
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/Frog.glb");
+        let (mesh, skeleton, animations) = load_skinned_mesh_data(&path).expect("load frog mesh");
+        let footprint_matrix =
+            skinned_footprint_matrix(&mesh.vertices, 1.0, 1.0, TARGET_NPC_HEIGHT);
+        let player = AnimationPlayer::new(FROG_IDLE);
+        let bones = player.bone_matrices(&skeleton, &animations);
+
+        let mut min = [f32::MAX; 3];
+        let mut max = [f32::MIN; 3];
+        for v in &mesh.vertices {
+            let skinned = skin_vertex_linear(&bones, v.joints, v.weights, v.position);
+            let (p, w) = footprint_matrix.transform_point(Vec3::new(
+                skinned[0], skinned[1], skinned[2],
+            ));
+            let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
+            let pos = [p.x * inv_w, p.y * inv_w, p.z * inv_w];
+            for axis in 0..3 {
+                min[axis] = min[axis].min(pos[axis]);
+                max[axis] = max[axis].max(pos[axis]);
+            }
+        }
+        let size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+        eprintln!("idle fitted size xyz = {:?}", size);
+        assert!(size[1] > 1.2, "frog should stand near NPC height, got y={}", size[1]);
+        assert!(
+            size[1] >= size[0].min(size[2]) * 0.35,
+            "frog should not look flattened: size={size:?}"
         );
     }
 
