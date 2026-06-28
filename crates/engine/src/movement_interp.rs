@@ -11,65 +11,9 @@ struct Entry {
     to_world: [f32; 3],
     from_tile: TilePos,
     to_tile: TilePos,
-    /// Wall-clock instant when this tile step began (derived from server tick).
+    /// Wall-clock instant when this tile step began on the client.
     segment_start: Instant,
     facing_yaw: f32,
-}
-
-/// Maps server tick numbers to wall-clock time for stable interpolation.
-#[derive(Debug, Clone, Copy)]
-pub struct ServerClock {
-    anchor_tick: u64,
-    anchor_time: Instant,
-}
-
-fn instant_before(at: Instant, amount: Duration) -> Instant {
-    at.checked_sub(amount).unwrap_or(at)
-}
-
-impl ServerClock {
-    pub fn anchor_tick(&self) -> u64 {
-        self.anchor_tick
-    }
-
-    pub fn reset(&mut self, tick: u64, received_at: Instant) {
-        self.anchor_tick = tick;
-        self.anchor_time = received_at;
-    }
-
-    /// Wall time when the server began processing `tick`.
-    pub fn tick_start(&self, tick: u64) -> Instant {
-        if self.anchor_tick == 0 {
-            return instant_before(self.anchor_time, Duration::from_millis(TICK_MS));
-        }
-        let delta_ticks = tick.saturating_sub(self.anchor_tick) as u64;
-        instant_before(
-            self.anchor_time + Duration::from_millis(delta_ticks * TICK_MS),
-            Duration::from_millis(TICK_MS),
-        )
-    }
-
-    pub fn on_tick(&mut self, tick: u64, received_at: Instant) -> Instant {
-        let start = if self.anchor_tick == 0 || tick < self.anchor_tick {
-            self.reset(tick, received_at);
-            instant_before(received_at, Duration::from_millis(TICK_MS))
-        } else {
-            let start = self.tick_start(tick);
-            self.anchor_tick = tick;
-            self.anchor_time = received_at;
-            start
-        };
-        start
-    }
-}
-
-impl Default for ServerClock {
-    fn default() -> Self {
-        Self {
-            anchor_tick: 0,
-            anchor_time: Instant::now(),
-        }
-    }
 }
 
 #[derive(Debug, Default)]
@@ -135,7 +79,6 @@ impl EntityMovementInterp {
         &mut self,
         id: EntityId,
         new_pos: TilePos,
-        segment_start: Instant,
         now: Instant,
         region: Option<&RegionDef>,
         footprint: Option<NpcFootprint>,
@@ -157,7 +100,7 @@ impl EntityMovementInterp {
                         to_world: new_world,
                         from_tile: new_pos,
                         to_tile: new_pos,
-                        segment_start,
+                        segment_start: now,
                         facing_yaw,
                     }
                 } else {
@@ -172,7 +115,7 @@ impl EntityMovementInterp {
                         to_world: new_world,
                         from_tile: existing.to_tile,
                         to_tile: new_pos,
-                        segment_start,
+                        segment_start: now,
                         facing_yaw,
                     }
                 }
@@ -182,7 +125,7 @@ impl EntityMovementInterp {
                 to_world: new_world,
                 from_tile: new_pos,
                 to_tile: new_pos,
-                segment_start,
+                segment_start: now,
                 facing_yaw: 0.0,
             },
         };
@@ -250,7 +193,7 @@ mod tests {
         let id = EntityId(1);
         let pos = TilePos::new(3, 4);
         let t = now();
-        interp.on_position_change(id, pos, t, t, None, None);
+        interp.on_position_change(id, pos, t, None, None);
 
         let center = interp.visual_center(id, t, None, None).unwrap();
         assert!((center[0] - 3.5).abs() < f32::EPSILON);
@@ -262,8 +205,8 @@ mod tests {
         let mut interp = EntityMovementInterp::default();
         let id = EntityId(1);
         let start = now();
-        interp.on_position_change(id, TilePos::new(0, 0), start, start, None, None);
-        interp.on_position_change(id, TilePos::new(1, 0), start, start, None, None);
+        interp.on_position_change(id, TilePos::new(0, 0), start, None, None);
+        interp.on_position_change(id, TilePos::new(1, 0), start, None, None);
 
         let mid = start + Duration::from_millis(TICK_MS / 2);
         let center = interp.visual_center(id, mid, None, None).unwrap();
@@ -276,8 +219,8 @@ mod tests {
         let mut interp = EntityMovementInterp::default();
         let id = EntityId(1);
         let start = now();
-        interp.on_position_change(id, TilePos::new(0, 0), start, start, None, None);
-        interp.on_position_change(id, TilePos::new(5, 5), start, start, None, None);
+        interp.on_position_change(id, TilePos::new(0, 0), start, None, None);
+        interp.on_position_change(id, TilePos::new(5, 5), start, None, None);
 
         let mid = start + Duration::from_millis(TICK_MS / 2);
         let center = interp.visual_center(id, mid, None, None).unwrap();
@@ -290,8 +233,8 @@ mod tests {
         let mut interp = EntityMovementInterp::default();
         let id = EntityId(1);
         let start = now();
-        interp.on_position_change(id, TilePos::new(0, 0), start, start, None, None);
-        interp.on_position_change(id, TilePos::new(1, 0), start, start, None, None);
+        interp.on_position_change(id, TilePos::new(0, 0), start, None, None);
+        interp.on_position_change(id, TilePos::new(1, 0), start, None, None);
 
         let yaw = interp.visual_facing_yaw(id, start).unwrap();
         assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 0.01);
@@ -302,8 +245,8 @@ mod tests {
         let mut interp = EntityMovementInterp::default();
         let id = EntityId(1);
         let start = now();
-        interp.on_position_change(id, TilePos::new(0, 0), start, start, None, None);
-        interp.on_position_change(id, TilePos::new(1, 0), start, start, None, None);
+        interp.on_position_change(id, TilePos::new(0, 0), start, None, None);
+        interp.on_position_change(id, TilePos::new(1, 0), start, None, None);
 
         let late = start + Duration::from_millis(TICK_MS * 2);
         let center = interp.visual_center(id, late, None, None).unwrap();
@@ -315,21 +258,12 @@ mod tests {
         let mut interp = EntityMovementInterp::default();
         let id = EntityId(1);
         let start = now();
-        interp.on_position_change(id, TilePos::new(0, 0), start, start, None, None);
-        interp.on_position_change(id, TilePos::new(1, 0), start, start, None, None);
+        interp.on_position_change(id, TilePos::new(0, 0), start, None, None);
+        interp.on_position_change(id, TilePos::new(1, 0), start, None, None);
 
         let mid = start + Duration::from_millis(TICK_MS / 2);
         let before = interp.visual_center(id, mid, None, None).unwrap();
-
-        let next_start = start + Duration::from_millis(TICK_MS);
-        interp.on_position_change(
-            id,
-            TilePos::new(2, 0),
-            next_start,
-            mid,
-            None,
-            None,
-        );
+        interp.on_position_change(id, TilePos::new(2, 0), mid, None, None);
 
         let after = interp.visual_center(id, mid, None, None).unwrap();
         assert!((after[0] - before[0]).abs() < 0.01);
@@ -337,14 +271,21 @@ mod tests {
     }
 
     #[test]
-    fn server_clock_estimates_tick_start() {
-        let mut clock = ServerClock::default();
+    fn consecutive_server_ticks_interpolate_from_receipt() {
+        let mut interp = EntityMovementInterp::default();
+        let id = EntityId(1);
         let t0 = now();
-        let start1 = clock.on_tick(10, t0);
-        assert_eq!(start1, t0 - Duration::from_millis(TICK_MS));
+        interp.on_position_change(id, TilePos::new(0, 0), t0, None, None);
 
         let t1 = t0 + Duration::from_millis(TICK_MS);
-        let start2 = clock.on_tick(11, t1);
-        assert_eq!(start2, t0);
+        interp.on_position_change(id, TilePos::new(1, 0), t1, None, None);
+
+        assert!(interp.is_moving(id, t1));
+        let center = interp.visual_center(id, t1, None, None).unwrap();
+        assert!(
+            (center[0] - 0.5).abs() < 0.01,
+            "expected start of tile step, got x={}",
+            center[0]
+        );
     }
 }
