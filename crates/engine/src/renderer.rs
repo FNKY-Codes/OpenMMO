@@ -7,6 +7,7 @@ use openmmo_common::{EntityId, RegionDef, TilePos, WorldEntity};
 use crate::camera::Camera;
 use crate::entity_bounds;
 use crate::math::Vec3;
+use crate::mesh::{Mesh, ModelCache};
 use crate::movement_interp::EntityMovementInterp;
 
 #[repr(C)]
@@ -426,6 +427,8 @@ impl Renderer {
         view: &wgpu::TextureView,
         region: Option<&RegionDef>,
         entities: &[WorldEntity],
+        content: &openmmo_common::ContentPack,
+        model_cache: &mut ModelCache,
         local_player: Option<openmmo_common::PlayerId>,
         movement_interp: &EntityMovementInterp,
         hover: Option<HoverTarget>,
@@ -496,6 +499,8 @@ impl Renderer {
                     eye,
                     now,
                     movement_interp,
+                    content,
+                    model_cache,
                     &mut opaque_entity_vertices,
                     &mut opaque_outline_vertices,
                     &mut transparent_entity_vertices,
@@ -512,6 +517,8 @@ impl Renderer {
                 eye,
                 now,
                 movement_interp,
+                content,
+                model_cache,
                 &mut opaque_entity_vertices,
                 &mut opaque_outline_vertices,
                 &mut transparent_entity_vertices,
@@ -738,6 +745,8 @@ impl Renderer {
         eye: Vec3,
         now: Instant,
         movement_interp: &EntityMovementInterp,
+        content: &openmmo_common::ContentPack,
+        model_cache: &mut ModelCache,
         opaque_entity_vertices: &mut Vec<Vertex>,
         opaque_outline_vertices: &mut Vec<Vertex>,
         transparent_entity_vertices: &mut Vec<Vertex>,
@@ -782,22 +791,42 @@ impl Renderer {
                     transparent_draws,
                 );
             }
-            openmmo_common::EntityKind::Npc { hp, .. } => {
+            openmmo_common::EntityKind::Npc { npc_id, hp, .. } => {
                 let Some([cx, surface_y, cz]) = visual_base else {
                     return;
                 };
-                let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
-                let color = if *hp > 0 {
+                let alive = *hp > 0;
+                let fallback_color = if alive {
                     [0.85, 0.2, 0.2, 1.0]
                 } else {
                     [0.4, 0.4, 0.4, 0.6]
                 };
+                if let Some(def) = content.npc(*npc_id) {
+                    if let Some(model_name) = def.model.as_deref() {
+                        if let Some(mesh) = model_cache.get(model_name) {
+                            self.add_entity_mesh(
+                                [cx, surface_y, cz],
+                                eye,
+                                mesh,
+                                alive,
+                                fallback_color,
+                                opaque_entity_vertices,
+                                opaque_outline_vertices,
+                                transparent_entity_vertices,
+                                transparent_outline_vertices,
+                                transparent_draws,
+                            );
+                            return;
+                        }
+                    }
+                }
+                let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 self.add_entity_cube(
                     [cx, surface_y, cz],
                     eye,
                     width,
                     height,
-                    color,
+                    fallback_color,
                     opaque_entity_vertices,
                     opaque_outline_vertices,
                     transparent_entity_vertices,
@@ -931,6 +960,75 @@ impl Renderer {
             let dx = center[0] - eye.x;
             let dy = center[1] - eye.y;
             let dz = center[2] - eye.z;
+            transparent_draws.push(TransparentDraw {
+                solid_start,
+                solid_len,
+                outline_start,
+                outline_len,
+                sort_key: dx * dx + dy * dy + dz * dz,
+            });
+        }
+    }
+
+    fn add_entity_mesh(
+        &self,
+        base: [f32; 3],
+        eye: Vec3,
+        mesh: &Mesh,
+        alive: bool,
+        dead_color: [f32; 4],
+        opaque_entity_vertices: &mut Vec<Vertex>,
+        opaque_outline_vertices: &mut Vec<Vertex>,
+        transparent_entity_vertices: &mut Vec<Vertex>,
+        transparent_outline_vertices: &mut Vec<Vertex>,
+        transparent_draws: &mut Vec<TransparentDraw>,
+    ) {
+        let [cx, surface_y, cz] = base;
+        let transparent = !alive;
+        let (entity_vertices, outline_vertices) = if transparent {
+            (
+                transparent_entity_vertices,
+                transparent_outline_vertices,
+            )
+        } else {
+            (opaque_entity_vertices, opaque_outline_vertices)
+        };
+
+        let solid_start = entity_vertices.len() as u32;
+        for face in &mesh.faces {
+            let color = if alive {
+                face.color
+            } else {
+                dead_color
+            };
+            for pos in face.positions {
+                entity_vertices.push(Vertex {
+                    position: [cx + pos[0], surface_y + pos[1], cz + pos[2]],
+                    color,
+                });
+            }
+        }
+        let solid_len = entity_vertices.len() as u32 - solid_start;
+
+        let outline_start = outline_vertices.len() as u32;
+        for face in &mesh.faces {
+            let [a, b, c] = face.positions;
+            let world = |p: [f32; 3]| [cx + p[0], surface_y + p[1], cz + p[2]];
+            let wa = world(a);
+            let wb = world(b);
+            let wc = world(c);
+            let edge_color = [0.0, 0.0, 0.0, 1.0];
+            push_line(wa, wb, edge_color, outline_vertices);
+            push_line(wb, wc, edge_color, outline_vertices);
+            push_line(wc, wa, edge_color, outline_vertices);
+        }
+        let outline_len = outline_vertices.len() as u32 - outline_start;
+
+        if transparent {
+            let center_y = surface_y + mesh.height * 0.5;
+            let dx = cx - eye.x;
+            let dy = center_y - eye.y;
+            let dz = cz - eye.z;
             transparent_draws.push(TransparentDraw {
                 solid_start,
                 solid_len,
