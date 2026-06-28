@@ -77,10 +77,15 @@ pub struct SkinnedModelVertex {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct SkinnedUniforms {
+pub struct SkinnedSceneUniforms {
     pub view_proj: [[f32; 4]; 4],
     pub model: [[f32; 4]; 4],
     pub tint: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct SkinnedBoneUniforms {
     pub bones: [[[f32; 4]; 4]; MAX_JOINTS],
 }
 
@@ -91,6 +96,7 @@ pub struct SkinnedGlbModel {
     pub index_buffer: wgpu::Buffer,
     pub index_count: u32,
     pub uniform_buffer: wgpu::Buffer,
+    pub bone_uniform_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
     pub width: f32,
     pub height: f32,
@@ -290,12 +296,22 @@ pub fn load_skinned_glb_model(
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 2,
+                binding: 3,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -376,8 +392,15 @@ pub fn load_skinned_glb_model(
     });
 
     let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Skinned Model Uniform Buffer"),
-        size: std::mem::size_of::<SkinnedUniforms>() as u64,
+        label: Some("Skinned Model Scene Uniform Buffer"),
+        size: std::mem::size_of::<SkinnedSceneUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let bone_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Skinned Model Bone Uniform Buffer"),
+        size: std::mem::size_of::<SkinnedBoneUniforms>() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -394,10 +417,14 @@ pub fn load_skinned_glb_model(
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
+                resource: bone_uniform_buffer.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
                 resource: wgpu::BindingResource::TextureView(&texture_view),
             },
         ],
@@ -410,6 +437,7 @@ pub fn load_skinned_glb_model(
         index_buffer,
         index_count: mesh.indices.len() as u32,
         uniform_buffer,
+        bone_uniform_buffer,
         bind_group,
         width,
         height,
@@ -434,20 +462,28 @@ impl SkinnedGlbModel {
             return;
         }
         let mut bone_cols = [[[0.0f32; 4]; 4]; MAX_JOINTS];
+        for i in 0..MAX_JOINTS {
+            bone_cols[i] = Mat4::identity().cols;
+        }
         for (i, bone) in bones.iter().take(MAX_JOINTS).enumerate() {
             bone_cols[i] = bone.cols;
         }
         let model = instance.model.mul(self.footprint_matrix);
-        let uniforms = SkinnedUniforms {
+        let scene_uniforms = SkinnedSceneUniforms {
             view_proj: view_proj.cols,
             model: model.cols,
             tint: instance.tint,
-            bones: bone_cols,
         };
+        let bone_uniforms = SkinnedBoneUniforms { bones: bone_cols };
         queue.write_buffer(
             &self.uniform_buffer,
             0,
-            bytemuck::bytes_of(&uniforms),
+            bytemuck::bytes_of(&scene_uniforms),
+        );
+        queue.write_buffer(
+            &self.bone_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&bone_uniforms),
         );
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
@@ -494,7 +530,7 @@ fn load_skinned_mesh_data(path: &Path) -> Result<(SkinnedMeshData, Skeleton, Ani
                 .read_tex_coords(0)
                 .map(|iter| iter.into_f32().collect())
                 .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
-            let joints: Vec<[u16; 4]> = joints_iter.into_u16().collect();
+            let joints = read_skin_joints(joints_iter);
             let weights: Vec<[f32; 4]> = weights_iter.into_f32().collect();
 
             let base = vertices.len() as u32;
@@ -508,12 +544,7 @@ fn load_skinned_mesh_data(path: &Path) -> Result<(SkinnedMeshData, Skeleton, Ani
                     position: positions[i],
                     normal: normals[i],
                     uv: uvs[i],
-                    joints: [
-                        joints[i][0] as u32,
-                        joints[i][1] as u32,
-                        joints[i][2] as u32,
-                        joints[i][3] as u32,
-                    ],
+                    joints: joints[i],
                     weights: w,
                 });
             }
@@ -559,6 +590,18 @@ fn load_skinned_mesh_data(path: &Path) -> Result<(SkinnedMeshData, Skeleton, Ani
     ))
 }
 
+fn read_skin_joints(joints_iter: gltf::mesh::util::ReadJoints<'_>) -> Vec<[u32; 4]> {
+    use gltf::mesh::util::ReadJoints;
+    match joints_iter {
+        ReadJoints::U8(iter) => iter
+            .map(|j| [j[0] as u32, j[1] as u32, j[2] as u32, j[3] as u32])
+            .collect(),
+        ReadJoints::U16(iter) => iter
+            .map(|j| [j[0] as u32, j[1] as u32, j[2] as u32, j[3] as u32])
+            .collect(),
+    }
+}
+
 fn skinned_bind_pose_bounds(vertices: &[SkinnedModelVertex]) -> ([f32; 3], [f32; 3]) {
     let mut min = [f32::MAX; 3];
     let mut max = [f32::MIN; 3];
@@ -578,11 +621,9 @@ fn skinned_footprint_matrix(
     target_height: f32,
 ) -> Mat4 {
     let (min, max) = skinned_bind_pose_bounds(vertices);
-    let width_x = (max[0] - min[0]).max(0.01);
     let height_y = (max[1] - min[1]).max(0.01);
-    let depth_z = (max[2] - min[2]).max(0.01);
-    let max_dim = width_x.max(height_y).max(depth_z);
-    let scale = target_height / max_dim;
+    // Fit standing height, not the widest limb span — max-dim scaling squashes squat meshes.
+    let scale = target_height / height_y;
 
     let center_x = (min[0] + max[0]) * 0.5;
     let center_z = (min[2] + max[2]) * 0.5;
@@ -607,6 +648,24 @@ fn skinned_footprint_dims(vertices: &[SkinnedModelVertex], matrix: Mat4) -> (f32
     let height = (max[1] - min[1]).max(0.01);
     let width = (max[0] - min[0]).max(max[2] - min[2]).max(0.01);
     (width, height)
+}
+
+#[cfg(test)]
+fn skin_vertex_vector(bones: &[Mat4], joints: [u32; 4], weights: [f32; 4], position: [f32; 3]) -> [f32; 3] {
+    let mut out = [0.0f32; 3];
+    for i in 0..4 {
+        let bone = bones
+            .get(joints[i] as usize)
+            .copied()
+            .unwrap_or(Mat4::identity());
+        let (p, w) = bone.transform_point(Vec3::new(position[0], position[1], position[2]));
+        let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
+        let scale = weights[i] * inv_w;
+        out[0] += p.x * scale;
+        out[1] += p.y * scale;
+        out[2] += p.z * scale;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1166,6 +1225,52 @@ mod tests {
     }
 
     #[test]
+    fn frog_joint_indices_stay_in_skin_range() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/Frog.glb");
+        let (mesh, skeleton, _) = load_skinned_mesh_data(&path).expect("load frog mesh");
+        let max_joint = mesh
+            .vertices
+            .iter()
+            .flat_map(|v| v.joints)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_joint < skeleton.joint_count as u32,
+            "joint index {max_joint} exceeds skin joint count {}",
+            skeleton.joint_count
+        );
+    }
+
+    #[test]
+    fn frog_idle_skinning_has_no_outliers() {
+        use crate::animation::FROG_IDLE;
+
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/Frog.glb");
+        let (mesh, skeleton, animations) = load_skinned_mesh_data(&path).expect("load frog mesh");
+        let footprint_matrix =
+            skinned_footprint_matrix(&mesh.vertices, 1.0, 1.0, TARGET_NPC_HEIGHT);
+        let bones = skeleton.sample_clip(
+            animations.clips.get(FROG_IDLE).expect("idle clip"),
+            1.25,
+        );
+
+        let mut max_dist = 0.0f32;
+        for v in &mesh.vertices {
+            let skinned = skin_vertex_vector(&bones, v.joints, v.weights, v.position);
+            let (p, w) = footprint_matrix.transform_point(Vec3::new(
+                skinned[0], skinned[1], skinned[2],
+            ));
+            let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
+            let dist = (p.x * inv_w).hypot(p.z * inv_w);
+            max_dist = max_dist.max(dist);
+        }
+        assert!(
+            max_dist < 4.0,
+            "idle skinning produced outlier vertices (max xz dist {max_dist})"
+        );
+    }
+
+    #[test]
     fn frog_bind_pose_skinning_preserves_vertices() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/Frog.glb");
         assert!(path.is_file(), "missing Frog.glb at {path:?}");
@@ -1214,14 +1319,48 @@ mod tests {
         let fitted_aspect_xz = fitted_size[0] / fitted_size[2];
 
         assert!(min[1].abs() < 1e-3, "feet should rest on y=0");
-        let largest_dim = fitted_size[0].max(fitted_size[1]).max(fitted_size[2]);
         assert!(
-            (largest_dim - target_height).abs() < 0.05,
-            "largest dimension should match target height (got {largest_dim})"
+            (fitted_size[1] - target_height).abs() < 0.05,
+            "height should match target (got {})",
+            fitted_size[1]
         );
         assert!(
             (raw_aspect_xz - fitted_aspect_xz).abs() < 0.02,
             "uniform scale should preserve xz aspect ratio"
+        );
+    }
+
+    #[test]
+    fn frog_idle_skinned_bounds_stay_upright() {
+        use crate::animation::{AnimationPlayer, FROG_IDLE};
+
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/Frog.glb");
+        let (mesh, skeleton, animations) = load_skinned_mesh_data(&path).expect("load frog mesh");
+        let footprint_matrix =
+            skinned_footprint_matrix(&mesh.vertices, 1.0, 1.0, TARGET_NPC_HEIGHT);
+        let player = AnimationPlayer::new(FROG_IDLE);
+        let bones = player.bone_matrices(&skeleton, &animations);
+
+        let mut min = [f32::MAX; 3];
+        let mut max = [f32::MIN; 3];
+        for v in &mesh.vertices {
+            let skinned = skin_vertex_linear(&bones, v.joints, v.weights, v.position);
+            let (p, w) = footprint_matrix.transform_point(Vec3::new(
+                skinned[0], skinned[1], skinned[2],
+            ));
+            let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
+            let pos = [p.x * inv_w, p.y * inv_w, p.z * inv_w];
+            for axis in 0..3 {
+                min[axis] = min[axis].min(pos[axis]);
+                max[axis] = max[axis].max(pos[axis]);
+            }
+        }
+        let size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+        eprintln!("idle fitted size xyz = {:?}", size);
+        assert!(size[1] > 1.2, "frog should stand near NPC height, got y={}", size[1]);
+        assert!(
+            size[1] >= size[0].min(size[2]) * 0.35,
+            "frog should not look flattened: size={size:?}"
         );
     }
 
