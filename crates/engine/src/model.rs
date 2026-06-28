@@ -10,8 +10,8 @@ use crate::entity_bounds;
 use crate::math::{Mat4, Vec3};
 
 const TARGET_PLAYER_HEIGHT: f32 = 1.8;
-/// Loose horizontal bound so humanoid arm span does not shrink height to fit one tile.
-const PLAYER_MODEL_FOOTPRINT: f32 = 4.0;
+/// Player occupies a single world tile horizontally.
+const PLAYER_TILE_FOOTPRINT: f32 = 1.0;
 const TARGET_NPC_HEIGHT: f32 = 1.6;
 
 #[repr(C)]
@@ -216,8 +216,8 @@ pub fn load_player_model(
         queue,
         surface_format,
         path,
-        PLAYER_MODEL_FOOTPRINT,
-        PLAYER_MODEL_FOOTPRINT,
+        PLAYER_TILE_FOOTPRINT,
+        PLAYER_TILE_FOOTPRINT,
         TARGET_PLAYER_HEIGHT,
     ) {
         attach_player_animations(&mut model);
@@ -241,12 +241,8 @@ fn attach_player_animations(model: &mut SkinnedGlbModel) {
                 return;
             }
             model.animations = clips;
-            crate::animation::align_skeleton_to_clip(
-                &mut model.skeleton,
-                &model.animations,
-                crate::animation::PLAYER_IDLE,
-            );
             model.bind_pose_bones = model.skeleton.bind_pose();
+            recompute_player_footprint(model);
             tracing::info!(
                 ?path,
                 clips = model.animations.clips.len(),
@@ -257,6 +253,24 @@ fn attach_player_animations(model: &mut SkinnedGlbModel) {
             tracing::warn!(?path, %err, "failed to load player animations");
         }
     }
+}
+
+fn recompute_player_footprint(model: &mut SkinnedGlbModel) {
+    let Some(idle) = model.animations.clips.get(crate::animation::PLAYER_IDLE) else {
+        return;
+    };
+    let idle_bones = model.skeleton.sample_clip(idle, 0.0);
+    model.footprint_matrix = skinned_footprint_matrix_from_bones(
+        &model.bind_vertices,
+        &idle_bones,
+        PLAYER_TILE_FOOTPRINT,
+        PLAYER_TILE_FOOTPRINT,
+        TARGET_PLAYER_HEIGHT,
+    );
+    let (width, height) =
+        skinned_footprint_dims_from_bones(&model.bind_vertices, &idle_bones, model.footprint_matrix);
+    model.width = width.min(PLAYER_TILE_FOOTPRINT);
+    model.height = height;
 }
 
 pub fn load_npc_model(
@@ -699,6 +713,71 @@ fn skinned_footprint_matrix(
     let translate_to_origin = Mat4::translation(-center_x, -base_y, -center_z);
     let uniform_scale = Mat4::scale(scale, scale, scale);
     uniform_scale.mul(translate_to_origin)
+}
+
+fn skinned_bounds_from_bones(
+    vertices: &[SkinnedModelVertex],
+    bones: &[Mat4],
+) -> ([f32; 3], [f32; 3]) {
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    for v in vertices {
+        let pos = skin_vertex_position(bones, v.joints, v.weights, v.position);
+        for axis in 0..3 {
+            min[axis] = min[axis].min(pos[axis]);
+            max[axis] = max[axis].max(pos[axis]);
+        }
+    }
+    (min, max)
+}
+
+fn skinned_footprint_matrix_from_bones(
+    vertices: &[SkinnedModelVertex],
+    bones: &[Mat4],
+    footprint_w: f32,
+    footprint_h: f32,
+    target_height: f32,
+) -> Mat4 {
+    let (min, max) = skinned_bounds_from_bones(vertices, bones);
+    let width_x = (max[0] - min[0]).max(0.01);
+    let height_y = (max[1] - min[1]).max(0.01);
+    let depth_z = (max[2] - min[2]).max(0.01);
+    let horizontal = width_x.max(depth_z);
+    let footprint_span = footprint_w.min(footprint_h);
+    let scale_fit_footprint = footprint_span / horizontal;
+    let scale_fit_height = target_height / height_y;
+    let scale = scale_fit_footprint.min(scale_fit_height);
+
+    let center_x = (min[0] + max[0]) * 0.5;
+    let center_z = (min[2] + max[2]) * 0.5;
+    let base_y = min[1];
+    let translate_to_origin = Mat4::translation(-center_x, -base_y, -center_z);
+    let uniform_scale = Mat4::scale(scale, scale, scale);
+    uniform_scale.mul(translate_to_origin)
+}
+
+fn skinned_footprint_dims_from_bones(
+    vertices: &[SkinnedModelVertex],
+    bones: &[Mat4],
+    matrix: Mat4,
+) -> (f32, f32) {
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    for v in vertices {
+        let skinned = skin_vertex_position(bones, v.joints, v.weights, v.position);
+        let (p, w) = matrix.transform_point(Vec3::new(
+            skinned[0], skinned[1], skinned[2],
+        ));
+        let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
+        let pos = [p.x * inv_w, p.y * inv_w, p.z * inv_w];
+        for axis in 0..3 {
+            min[axis] = min[axis].min(pos[axis]);
+            max[axis] = max[axis].max(pos[axis]);
+        }
+    }
+    let height = (max[1] - min[1]).max(0.01);
+    let width = (max[0] - min[0]).max(max[2] - min[2]).max(0.01);
+    (width, height)
 }
 
 fn skinned_footprint_dims(vertices: &[SkinnedModelVertex], matrix: Mat4) -> (f32, f32) {
@@ -1532,19 +1611,36 @@ mod tests {
     }
 
     #[test]
+    fn player_idle_pose_fits_one_tile() {
+        use crate::animation::{load_animation_clips, PLAYER_IDLE};
+
+        let mesh_path = resolve_player_model_path().expect("player model should resolve");
+        let anim_path =
+            resolve_model_path(DEFAULT_PLAYER_ANIMATIONS).expect("UAL1 animation library should resolve");
+        let (mesh, skeleton, _) = load_skinned_mesh_data(&mesh_path).expect("load superhero mesh");
+        let clips = load_animation_clips(&anim_path).expect("load clips");
+        let idle_bones = skeleton.sample_clip(&clips.clips[PLAYER_IDLE], 0.0);
+        let footprint = skinned_footprint_matrix_from_bones(
+            &mesh.vertices,
+            &idle_bones,
+            PLAYER_TILE_FOOTPRINT,
+            PLAYER_TILE_FOOTPRINT,
+            TARGET_PLAYER_HEIGHT,
+        );
+        let (width, height) =
+            skinned_footprint_dims_from_bones(&mesh.vertices, &idle_bones, footprint);
+        assert!(
+            width <= PLAYER_TILE_FOOTPRINT + 0.05,
+            "idle player should fit one tile wide, got {width}"
+        );
+        assert!((height - TARGET_PLAYER_HEIGHT).abs() < 0.05);
+    }
+
+    #[test]
     fn superhero_gltf_loads_geometry() {
         let path = resolve_player_model_path().expect("player model should resolve");
         let (mesh, _, _) = load_skinned_mesh_data(&path).expect("skinned mesh load");
         assert!(!mesh.vertices.is_empty());
         assert!(!mesh.parts.is_empty());
-        let footprint = skinned_footprint_matrix(
-            &mesh.vertices,
-            PLAYER_MODEL_FOOTPRINT,
-            PLAYER_MODEL_FOOTPRINT,
-            TARGET_PLAYER_HEIGHT,
-        );
-        let (width, height) = skinned_footprint_dims(&mesh.vertices, footprint);
-        assert!((height - TARGET_PLAYER_HEIGHT).abs() < 0.05);
-        assert!(width > 0.2);
     }
 }
