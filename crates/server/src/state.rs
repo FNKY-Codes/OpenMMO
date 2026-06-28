@@ -136,15 +136,65 @@ impl GameWorld {
         eid
     }
 
+    /// Pick a walkable spawn tile near `base`, avoiding tiles occupied by NPCs or other players.
+    pub fn find_player_spawn(&self, region_id: RegionId, base: TilePos) -> TilePos {
+        let mut occupied = self.entity_occupied_tiles_in_region(Some(region_id), None);
+        for player in self.players.values() {
+            if player.region_id == region_id {
+                occupied.insert(player.position);
+            }
+        }
+        if self.is_walkable_in_region(region_id, base) && !occupied.contains(&base) {
+            return base;
+        }
+        for radius in 1..=12i32 {
+            for dx in -radius..=radius {
+                for dy in -radius..=radius {
+                    if dx.abs() != radius && dy.abs() != radius {
+                        continue;
+                    }
+                    let pos = TilePos::new(base.x + dx, base.y + dy);
+                    if self.is_walkable_in_region(region_id, pos) && !occupied.contains(&pos) {
+                        return pos;
+                    }
+                }
+            }
+        }
+        base
+    }
+
+    /// Move a player off a tile if another player is already standing there.
+    pub fn nudge_player_if_overlapping(&mut self, player_id: PlayerId) {
+        let Some((region_id, position)) = self
+            .players
+            .get(&player_id)
+            .map(|p| (p.region_id, p.position))
+        else {
+            return;
+        };
+        let overlapping = self.players.values().any(|p| {
+            p.id != player_id && p.region_id == region_id && p.position == position
+        });
+        if !overlapping {
+            return;
+        }
+        let spawn = self.find_player_spawn(region_id, position);
+        if let Some(player) = self.players.get_mut(&player_id) {
+            player.position = spawn;
+            player.last_position = spawn;
+        }
+    }
+
     pub fn add_player(&mut self, name: String) -> PlayerId {
         let id = PlayerId::new();
         let entity_id = self.alloc_entity();
-        let (spawn, region_id) = self
+        let (base_spawn, region_id) = self
             .content
             .regions
             .first()
             .map(|r| (r.spawn, r.id))
             .unwrap_or((TilePos::new(5, 5), RegionId(1)));
+        let spawn = self.find_player_spawn(region_id, base_spawn);
         let mut skills = SkillBook::new_mvp();
         for skill in Skill::BETA {
             skills.skills.insert(*skill, Default::default());
@@ -400,6 +450,29 @@ pub fn world_channel() -> broadcast::Sender<String> {
 mod tests {
     use super::*;
     use openmmo_common::{ContentPack, RegionDef, RegionTransition, TilePos};
+
+    #[test]
+    fn second_player_spawns_on_adjacent_tile() {
+        let mut pack = ContentPack::default();
+        pack.regions = vec![RegionDef {
+            id: RegionId(1),
+            name: "Test".into(),
+            width: 5,
+            height: 5,
+            spawn: TilePos::new(2, 2),
+            tiles: vec![0; 25],
+            objects: vec![],
+            npcs: vec![],
+            transitions: vec![],
+        }];
+        let mut world = GameWorld::new(pack);
+        let first = world.add_player("Alice".into());
+        let first_pos = world.players.get(&first).unwrap().position;
+        let second = world.add_player("Bob".into());
+        let second_pos = world.players.get(&second).unwrap().position;
+        assert_eq!(first_pos, TilePos::new(2, 2));
+        assert_ne!(second_pos, first_pos);
+    }
 
     #[test]
     fn region_transition_moves_player() {

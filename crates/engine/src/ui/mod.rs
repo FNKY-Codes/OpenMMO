@@ -156,6 +156,8 @@ impl GameUi {
         combat_opponent: Option<openmmo_common::EntityId>,
         player_tile: Option<openmmo_common::TilePos>,
         region: Option<&RegionDef>,
+        entities: &[WorldEntity],
+        local_player: Option<openmmo_common::PlayerId>,
     ) -> UiAction {
         let mut action = UiAction::None;
 
@@ -185,11 +187,31 @@ impl GameUi {
                     if let (Some(pos), Some(region)) = (player_tile, region) {
                         let scale_x = rect.width() / region.width.max(1) as f32;
                         let scale_y = rect.height() / region.height.max(1) as f32;
-                        let dot = egui::pos2(
-                            rect.left() + pos.x as f32 * scale_x,
-                            rect.top() + pos.y as f32 * scale_y,
-                        );
-                        ui.painter().circle_filled(dot, 4.0, theme::ACCENT);
+                        for entity in entities {
+                            let EntityKind::Player {
+                                player_id,
+                                position,
+                                ..
+                            } = &entity.kind
+                            else {
+                                continue;
+                            };
+                            let dot = egui::pos2(
+                                rect.left() + position.x as f32 * scale_x,
+                                rect.top() + position.y as f32 * scale_y,
+                            );
+                            let color = if Some(*player_id) == local_player {
+                                theme::ACCENT
+                            } else {
+                                egui::Color32::from_rgb(230, 200, 80)
+                            };
+                            let radius = if Some(*player_id) == local_player {
+                                4.0
+                            } else {
+                                3.0
+                            };
+                            ui.painter().circle_filled(dot, radius, color);
+                        }
                     } else {
                         ui.painter()
                             .circle_filled(rect.center(), 4.0, theme::ACCENT);
