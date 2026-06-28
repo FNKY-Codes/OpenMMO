@@ -8,6 +8,7 @@ use openmmo_common::{ContentPack, EntityId, NpcFootprint, NpcId, RegionDef, Tile
 use crate::camera::Camera;
 use crate::entity_bounds;
 use crate::math::Vec3;
+use crate::mesh::{Mesh, ModelCache};
 use crate::model::{
     entity_model_matrix, load_npc_model, load_player_model, resolve_model_path, GlbModel,
     ModelDraw, ModelTarget, MUTANT_TIGER_MODEL, MUTANT_TIGER_NPC_ID,
@@ -356,10 +357,7 @@ impl Renderer {
                 footprint,
             ) {
                 Ok(model) => {
-                    eprintln!(
-                        "OpenMMO: loaded Mutant Tiger model from {}",
-                        path.display()
-                    );
+                    eprintln!("OpenMMO: loaded Mutant Tiger model from {}", path.display());
                     npc_models.insert(MUTANT_TIGER_NPC_ID, model);
                 }
                 Err(err) => {
@@ -489,11 +487,10 @@ impl Renderer {
         view: &wgpu::TextureView,
         region: Option<&RegionDef>,
         entities: &[WorldEntity],
-        content: &openmmo_common::ContentPack,
+        content: &ContentPack,
         model_cache: &mut ModelCache,
         local_player: Option<openmmo_common::PlayerId>,
         movement_interp: &EntityMovementInterp,
-        content: &ContentPack,
         hover: Option<HoverTarget>,
     ) {
         let vp = self
@@ -530,10 +527,8 @@ impl Renderer {
         }
 
         let eye = self.camera.eye_position();
-        let mut opaque_entity_vertices =
-            std::mem::take(&mut self.scratch_opaque_entity_vertices);
-        let mut opaque_outline_vertices =
-            std::mem::take(&mut self.scratch_opaque_outline_vertices);
+        let mut opaque_entity_vertices = std::mem::take(&mut self.scratch_opaque_entity_vertices);
+        let mut opaque_outline_vertices = std::mem::take(&mut self.scratch_opaque_outline_vertices);
         let mut transparent_entity_vertices =
             std::mem::take(&mut self.scratch_transparent_entity_vertices);
         let mut transparent_outline_vertices =
@@ -573,7 +568,6 @@ impl Renderer {
                     &mut transparent_draws,
                     &mut model_draws,
                     local_player,
-                    content,
                 );
             }
         }
@@ -593,7 +587,6 @@ impl Renderer {
                 &mut transparent_draws,
                 &mut model_draws,
                 local_player,
-                content,
             );
         }
 
@@ -625,7 +618,8 @@ impl Renderer {
             );
         }
         self.scratch_upload.extend(&hover_outline_vertices);
-        let hover_outline_base = transparent_outline_base + transparent_outline_vertices.len() as u32;
+        let hover_outline_base =
+            transparent_outline_base + transparent_outline_vertices.len() as u32;
         let hover_outline_count = hover_outline_vertices.len() as u32;
 
         self.scratch_opaque_entity_vertices = opaque_entity_vertices;
@@ -636,8 +630,7 @@ impl Renderer {
         self.scratch_model_draws = model_draws;
 
         if !self.scratch_upload.is_empty() {
-            let byte_offset =
-                tile_count as u64 * std::mem::size_of::<Vertex>() as u64;
+            let byte_offset = tile_count as u64 * std::mem::size_of::<Vertex>() as u64;
             self.gpu.queue.write_buffer(
                 &self.vertex_buffer,
                 byte_offset,
@@ -760,9 +753,7 @@ impl Renderer {
                         .or_else(|| {
                             entity_bounds::entity_tile(entity).map(|tile| {
                                 let surface_y = Self::tile_surface_height(tile, region);
-                                footprint
-                                    .unwrap_or_default()
-                                    .world_center(tile, surface_y)
+                                footprint.unwrap_or_default().world_center(tile, surface_y)
                             })
                         });
                     if let Some([cx, surface_y, cz]) = visual_base {
@@ -844,7 +835,7 @@ impl Renderer {
         eye: Vec3,
         now: Instant,
         movement_interp: &EntityMovementInterp,
-        content: &openmmo_common::ContentPack,
+        content: &ContentPack,
         model_cache: &mut ModelCache,
         opaque_entity_vertices: &mut Vec<Vertex>,
         opaque_outline_vertices: &mut Vec<Vertex>,
@@ -853,7 +844,6 @@ impl Renderer {
         transparent_draws: &mut Vec<TransparentDraw>,
         model_draws: &mut Vec<ModelDraw>,
         local_player: Option<openmmo_common::PlayerId>,
-        content: &ContentPack,
     ) {
         let footprint = entity_footprint(content, entity);
         let visual_base = movement_interp
@@ -861,9 +851,7 @@ impl Renderer {
             .or_else(|| {
                 entity_bounds::entity_tile(entity).map(|tile| {
                     let surface_y = Self::tile_surface_height(tile, region);
-                    footprint
-                        .unwrap_or_default()
-                        .world_center(tile, surface_y)
+                    footprint.unwrap_or_default().world_center(tile, surface_y)
                 })
             });
 
@@ -872,10 +860,7 @@ impl Renderer {
             .unwrap_or(0.0);
 
         match &entity.kind {
-            openmmo_common::EntityKind::Player {
-                player_id,
-                ..
-            } => {
+            openmmo_common::EntityKind::Player { player_id, .. } => {
                 let Some([cx, surface_y, cz]) = visual_base else {
                     return;
                 };
@@ -924,8 +909,8 @@ impl Renderer {
                     });
                     return;
                 }
-                let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
-                let color = if *hp > 0 {
+                let alive = *hp > 0;
+                let fallback_color = if alive {
                     [0.85, 0.2, 0.2, 1.0]
                 } else {
                     [0.4, 0.4, 0.4, 0.6]
@@ -1069,10 +1054,7 @@ impl Renderer {
         let transparent = color[3] < 1.0;
 
         let (entity_vertices, outline_vertices) = if transparent {
-            (
-                transparent_entity_vertices,
-                transparent_outline_vertices,
-            )
+            (transparent_entity_vertices, transparent_outline_vertices)
         } else {
             (opaque_entity_vertices, opaque_outline_vertices)
         };
@@ -1115,21 +1097,14 @@ impl Renderer {
         let [cx, surface_y, cz] = base;
         let transparent = !alive;
         let (entity_vertices, outline_vertices) = if transparent {
-            (
-                transparent_entity_vertices,
-                transparent_outline_vertices,
-            )
+            (transparent_entity_vertices, transparent_outline_vertices)
         } else {
             (opaque_entity_vertices, opaque_outline_vertices)
         };
 
         let solid_start = entity_vertices.len() as u32;
         for face in &mesh.faces {
-            let color = if alive {
-                face.color
-            } else {
-                dead_color
-            };
+            let color = if alive { face.color } else { dead_color };
             for pos in face.positions {
                 entity_vertices.push(Vertex {
                     position: [cx + pos[0], surface_y + pos[1], cz + pos[2]],
