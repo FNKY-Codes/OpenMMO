@@ -13,10 +13,14 @@ use egui_winit::egui;
 use crate::{
     entity_bounds,
     input::InputState,
+    mesh::{default_assets_dir, ModelCache},
     model::resolve_player_model_path,
     movement_interp::EntityMovementInterp,
     renderer::{HoverTarget, Renderer},
-    ui::{build_context_menu, draw_combat_health_bars, setup_theme, to_client_message, GameUi, UiAction},
+    ui::{
+        build_context_menu, draw_combat_health_bars, setup_theme, to_client_message, GameUi,
+        UiAction,
+    },
 };
 
 #[derive(Debug)]
@@ -301,8 +305,11 @@ impl EngineApp {
                     } = &mut entity.kind
                     {
                         if *pid == player_id {
-                            self.movement_interp
-                                .on_position_change(entity.entity_id, position, now);
+                            self.movement_interp.on_position_change(
+                                entity.entity_id,
+                                position,
+                                now,
+                            );
                             *pos = position;
                             *ehp = hp;
                             *emhp = max_hp;
@@ -337,9 +344,11 @@ impl EngineApp {
                 self.ui.chat_log.push((from, message));
             }
             ServerMessage::XpDrop { skill, amount } => {
-                self.ui
-                    .xp_drops
-                    .push((skill.name().to_string(), amount, std::time::Instant::now()));
+                self.ui.xp_drops.push((
+                    skill.name().to_string(),
+                    amount,
+                    std::time::Instant::now(),
+                ));
             }
             ServerMessage::Damage {
                 source,
@@ -380,7 +389,10 @@ impl EngineApp {
                 completed,
             } => {
                 let name = format!("Quest {}", quest_id.0);
-                let desc = format!("Stage {stage}{}", if completed { " (complete)" } else { "" });
+                let desc = format!(
+                    "Stage {stage}{}",
+                    if completed { " (complete)" } else { "" }
+                );
                 if let Some(entry) = self.quest_text.iter_mut().find(|(n, _)| n == &name) {
                     entry.1 = desc.clone();
                 } else {
@@ -425,8 +437,10 @@ impl EngineApp {
                 self.ui.ledger_points = points;
                 self.ui.ledger_contract = active_contract;
                 if let Some(c) = &self.ui.ledger_contract {
-                    self.ui.status =
-                        format!("Ledger rank {rank} ({points} pts): {} left {}", c.name, c.remaining);
+                    self.ui.status = format!(
+                        "Ledger rank {rank} ({points} pts): {} left {}",
+                        c.name, c.remaining
+                    );
                 }
             }
             ServerMessage::Error { message } => {
@@ -485,9 +499,9 @@ impl EngineApp {
 
     fn sync_local_hp(&mut self) {
         if let Some(lp) = self.local_player {
-            if let Some(entity) = self.entities.iter().find(|e| {
-                matches!(&e.kind, EntityKind::Player { player_id, .. } if *player_id == lp)
-            }) {
+            if let Some(entity) = self.entities.iter().find(
+                |e| matches!(&e.kind, EntityKind::Player { player_id, .. } if *player_id == lp),
+            ) {
                 if let EntityKind::Player { hp, max_hp, .. } = &entity.kind {
                     self.hp = *hp;
                     self.max_hp = *max_hp;
@@ -524,10 +538,7 @@ impl EngineApp {
             EntityKind::GroundItem { .. } => Some(ClientMessage::PickupItem {
                 ground_entity: entity_id,
             }),
-            EntityKind::Npc {
-                aggro_range,
-                ..
-            } => {
+            EntityKind::Npc { aggro_range, .. } => {
                 if *aggro_range == 0 {
                     Some(ClientMessage::TalkToNpc {
                         npc_entity: entity_id,
@@ -598,9 +609,9 @@ impl EngineApp {
 
         if self.ui.connected {
             if let Some(entity) = self.local_player.and_then(|lp| {
-                self.entities.iter().find(|e| {
-                    matches!(&e.kind, EntityKind::Player { player_id, .. } if *player_id == lp)
-                })
+                self.entities.iter().find(
+                    |e| matches!(&e.kind, EntityKind::Player { player_id, .. } if *player_id == lp),
+                )
             }) {
                 let now = Instant::now();
                 if let Some([cx, _, cz]) = self.movement_interp.visual_center(
@@ -670,10 +681,8 @@ impl EngineApp {
                     }
                     combatants.push(opponent);
                     let camera = renderer.camera();
-                    let vp = camera.view_projection(
-                        renderer.gpu().config.width,
-                        renderer.gpu().config.height,
-                    );
+                    let vp = camera
+                        .view_projection(renderer.gpu().config.width, renderer.gpu().config.height);
                     draw_combat_health_bars(
                         ctx,
                         &combatants,
@@ -719,7 +728,10 @@ impl EngineApp {
             UiAction::BankDeposit { inv_slot, quantity } => {
                 self.send(ClientMessage::BankDeposit { inv_slot, quantity });
             }
-            UiAction::BankWithdraw { bank_slot, quantity } => {
+            UiAction::BankWithdraw {
+                bank_slot,
+                quantity,
+            } => {
                 self.send(ClientMessage::BankWithdraw {
                     bank_slot,
                     quantity,
@@ -835,8 +847,10 @@ impl EngineApp {
                     self.local_player,
                     &self.content,
                 );
-                let screen_pos =
-                    egui::pos2(self.input.mouse_x / pixels_per_point, self.input.mouse_y / pixels_per_point);
+                let screen_pos = egui::pos2(
+                    self.input.mouse_x / pixels_per_point,
+                    self.input.mouse_y / pixels_per_point,
+                );
                 self.ui.context_menu = build_context_menu(
                     &self.content,
                     self.region.as_ref(),
