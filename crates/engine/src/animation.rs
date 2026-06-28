@@ -13,6 +13,11 @@ pub const FROG_JUMP: &str = "Frog_Jump";
 pub const FROG_ATTACK: &str = "Frog_Attack";
 pub const FROG_DEATH: &str = "Frog_Death";
 
+pub const PLAYER_IDLE: &str = "Idle_Loop";
+pub const PLAYER_WALK: &str = "Walk_Loop";
+pub const PLAYER_ATTACK: &str = "Punch_Jab";
+pub const PLAYER_DEATH: &str = "Death01";
+
 #[derive(Debug, Clone)]
 pub struct DeathCorpse {
     pub npc_id: openmmo_common::NpcId,
@@ -249,6 +254,27 @@ impl AnimationPlayer {
 pub fn load_animation_set(path: &Path) -> Result<(Skeleton, AnimationSet)> {
     let (document, buffers, _images) = gltf::import(path).context("failed to import glb")?;
     load_animation_from_document(&document, &buffers)
+}
+
+/// Load animation clips only (mesh/skin from the same file is ignored).
+pub fn load_animation_clips(path: &Path) -> Result<AnimationSet> {
+    let (document, buffers, _images) = gltf::import(path).context("failed to import animation glb")?;
+    let mut clips = AnimationSet::default();
+    for anim in document.animations() {
+        let clip = parse_animation(anim, &buffers)?;
+        clips.clips.insert(clip.name.clone(), clip);
+    }
+    Ok(clips)
+}
+
+pub fn align_skeleton_to_clip(
+    skeleton: &mut Skeleton,
+    clips: &AnimationSet,
+    clip_name: &str,
+) {
+    if let Some(clip) = clips.clips.get(clip_name) {
+        skeleton.align_rest_pose_to_clip(clip);
+    }
 }
 
 pub fn load_animation_from_document(

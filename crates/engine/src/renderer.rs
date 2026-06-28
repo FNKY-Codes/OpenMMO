@@ -5,7 +5,9 @@ use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
 use openmmo_common::{ContentPack, EntityId, NpcFootprint, NpcId, RegionDef, TilePos, WorldEntity};
 
-use crate::animation::{AnimationPlayer, DeathCorpse, FROG_ATTACK, FROG_IDLE, FROG_JUMP};
+use crate::animation::{
+    AnimationPlayer, DeathCorpse, FROG_ATTACK, FROG_IDLE, FROG_JUMP, PLAYER_IDLE, PLAYER_WALK,
+};
 use crate::camera::Camera;
 use crate::entity_bounds;
 use crate::math::Vec3;
@@ -768,7 +770,28 @@ impl Renderer {
                             model.draw_one(&mut render_pass, &self.gpu.queue, vp, draw);
                         }
                         NpcModel::Skinned(model) => {
-                            model.draw_bind_pose(&mut render_pass, &self.gpu.queue, vp, draw);
+                            let Some(entity_id) = draw.entity_id else {
+                                model.draw_bind_pose(&mut render_pass, &self.gpu.queue, vp, draw);
+                                continue;
+                            };
+                            if model.animations.clips.is_empty() {
+                                model.draw_bind_pose(&mut render_pass, &self.gpu.queue, vp, draw);
+                                continue;
+                            }
+                            let player = npc_animations.entry(entity_id).or_insert_with(|| {
+                                AnimationPlayer::new(PLAYER_IDLE)
+                            });
+                            update_player_clip(player, movement_interp, entity_id, now);
+                            player.advance(dt, &model.animations);
+                            let bones =
+                                player.bone_matrices(&model.skeleton, &model.animations);
+                            model.draw_one(
+                                &mut render_pass,
+                                &self.gpu.queue,
+                                vp,
+                                draw,
+                                &bones,
+                            );
                         }
                     }
                 }
@@ -1017,7 +1040,7 @@ impl Renderer {
                         target: ModelTarget::Player,
                         model: entity_model_matrix([cx, surface_y, cz], yaw),
                         tint,
-                        entity_id: None,
+                        entity_id: Some(entity.entity_id),
                     });
                     return;
                 }
@@ -1389,6 +1412,21 @@ fn push_line(a: [f32; 3], b: [f32; 3], color: [f32; 4], vertices: &mut Vec<Verte
 fn push_tri(a: [f32; 3], b: [f32; 3], c: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
     for position in [a, b, c] {
         vertices.push(Vertex { position, color });
+    }
+}
+
+fn update_player_clip(
+    player: &mut AnimationPlayer,
+    movement_interp: &EntityMovementInterp,
+    entity_id: EntityId,
+    now: Instant,
+) {
+    if movement_interp.is_moving(entity_id, now) {
+        if !player.is_playing(PLAYER_WALK) {
+            player.play(PLAYER_WALK, true);
+        }
+    } else if player.current_clip() != Some(PLAYER_IDLE) {
+        player.play(PLAYER_IDLE, true);
     }
 }
 
