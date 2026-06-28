@@ -272,6 +272,7 @@ mod tests {
             is_moderator: false,
             last_position: openmmo_common::TilePos::new(0, 0),
             ticks_stationary: 1,
+            region_id: openmmo_common::RegionId(1),
         };
         player.skills.grant_xp(Skill::Combat, 400);
         player.skills.grant_xp(Skill::Electrics, 400);
@@ -360,6 +361,7 @@ mod tests {
             is_moderator: false,
             last_position: openmmo_common::TilePos::new(0, 0),
             ticks_stationary: 1,
+            region_id: openmmo_common::RegionId(1),
         };
         let mut npc = NpcState {
             entity_id: EntityId(2),
@@ -375,6 +377,7 @@ mod tests {
             alive: true,
             respawn_ticks: 10,
             attack_cooldown: 0,
+            region_id: openmmo_common::RegionId(1),
         };
 
         let mut misses = 0;

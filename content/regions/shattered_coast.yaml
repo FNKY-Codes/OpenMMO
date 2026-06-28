@@ -234,3 +234,13 @@ tiles:
   - 1
 npcs: []
 objects: []
+transitions:
+- position:
+    plane: 0
+    x: 0
+    y: 7
+  target_region: 1
+  target_spawn:
+    plane: 0
+    x: 28
+    y: 15

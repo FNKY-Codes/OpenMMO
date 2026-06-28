@@ -19,3 +19,7 @@ pub struct QuestId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RegionId(pub u32);
+
+pub fn default_region_id() -> RegionId {
+    RegionId(1)
+}

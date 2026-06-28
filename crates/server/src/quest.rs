@@ -327,7 +327,7 @@ mod tests {
     use super::*;
     use openmmo_common::{
         ContentPack, EntityId, HarvestTag, Inventory, NpcId, NpcState, PlayerState, QuestId,
-        Skill, SkillBook, TilePos,
+        RegionId, Skill, SkillBook, TilePos,
     };
     use uuid::Uuid;
 
@@ -362,6 +362,7 @@ mod tests {
             is_moderator: false,
             last_position: TilePos::new(0, 0),
             ticks_stationary: 1,
+            region_id: RegionId(1),
         }
     }
 
@@ -440,6 +441,7 @@ mod tests {
                 respawn_ticks: 0,
                 alive: true,
                 attack_cooldown: 0,
+                region_id: RegionId(1),
             },
         );
         let msgs = handle_dialogue_select(&mut world, pid, entity_id, "npc_100_callings", 0);

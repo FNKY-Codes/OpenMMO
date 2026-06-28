@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{EntityId, ItemId, NpcId, PlayerId, Skill, TilePos};
+use crate::{default_region_id, EntityId, ItemId, NpcId, PlayerId, RegionId, Skill, TilePos};
 
 pub const TICK_MS: u64 = 600;
 pub const INVENTORY_SIZE: usize = 28;
@@ -33,6 +33,8 @@ pub struct PlayerState {
     pub last_position: TilePos,
     #[serde(default = "default_one")]
     pub ticks_stationary: u64,
+    #[serde(default = "default_region_id")]
+    pub region_id: RegionId,
 }
 
 fn default_one() -> u64 {
@@ -101,6 +103,8 @@ pub struct NpcState {
     #[serde(default)]
     pub attack_cooldown: u32,
     pub alive: bool,
+    #[serde(default = "default_region_id")]
+    pub region_id: RegionId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +114,8 @@ pub struct ObjectState {
     pub position: TilePos,
     pub depleted: bool,
     pub respawn_ticks: u32,
+    #[serde(default = "default_region_id")]
+    pub region_id: RegionId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,12 +125,16 @@ pub struct GroundItem {
     pub quantity: u32,
     pub position: TilePos,
     pub despawn_ticks: u32,
+    #[serde(default = "default_region_id")]
+    pub region_id: RegionId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldEntity {
     pub entity_id: EntityId,
     pub kind: EntityKind,
+    #[serde(default = "default_region_id")]
+    pub region_id: RegionId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

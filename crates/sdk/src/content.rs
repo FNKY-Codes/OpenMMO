@@ -152,6 +152,13 @@ pub struct SpellDef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegionTransition {
+    pub position: TilePos,
+    pub target_region: RegionId,
+    pub target_spawn: TilePos,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegionDef {
     pub id: RegionId,
     pub name: String,
@@ -161,6 +168,8 @@ pub struct RegionDef {
     pub tiles: Vec<u8>,
     pub objects: Vec<RegionObject>,
     pub npcs: Vec<RegionNpc>,
+    #[serde(default)]
+    pub transitions: Vec<RegionTransition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

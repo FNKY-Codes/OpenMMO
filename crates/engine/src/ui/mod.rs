@@ -10,7 +10,7 @@ use openmmo_common::{
     ContentPack, DialogueNode, EntityId, EntityKind, Equipment, Inventory, ItemId, RegionDef,
     SkillBook, WorldEntity,
 };
-use openmmo_protocol::LedgerContract;
+use openmmo_protocol::{ChatChannel, LedgerContract};
 
 use crate::entity_bounds;
 use crate::math::{self, Vec3};
@@ -33,6 +33,7 @@ pub struct GameUi {
     pub active_tab: Option<SidePanelTab>,
     pub show_minimap: bool,
     pub chat_input: String,
+    pub chat_channel: ChatChannel,
     pub chat_log: Vec<(String, String)>,
     pub combat_log: Vec<String>,
     pub xp_drops: Vec<(String, u64, Instant)>,
@@ -74,6 +75,7 @@ impl Default for GameUi {
             active_tab: Some(SidePanelTab::Inventory),
             show_minimap: true,
             chat_input: String::new(),
+            chat_channel: ChatChannel::Local,
             chat_log: Vec::new(),
             combat_log: Vec::new(),
             xp_drops: Vec::new(),
@@ -208,12 +210,22 @@ impl GameUi {
                     }
                 });
             ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("chat_channel")
+                    .selected_text(format!("{:?}", self.chat_channel))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.chat_channel, ChatChannel::Local, "Local");
+                        ui.selectable_value(&mut self.chat_channel, ChatChannel::Global, "Global");
+                        ui.selectable_value(&mut self.chat_channel, ChatChannel::Clan, "Clan");
+                    });
                 let response = ui.text_edit_singleline(&mut self.chat_input);
                 if (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                     || ui.button("Send").clicked()
                 {
                     if !self.chat_input.is_empty() {
-                        action = UiAction::Chat(self.chat_input.clone());
+                        action = UiAction::Chat {
+                            channel: self.chat_channel,
+                            message: self.chat_input.clone(),
+                        };
                         self.chat_input.clear();
                     }
                 }
@@ -401,7 +413,10 @@ fn entity_health_anchor(
 #[derive(Debug, Clone)]
 pub enum UiAction {
     None,
-    Chat(String),
+    Chat {
+        channel: ChatChannel,
+        message: String,
+    },
     DropItem(usize),
     EquipItem(usize),
     UnequipItem(openmmo_common::EquipSlot),
