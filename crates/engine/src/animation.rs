@@ -255,11 +255,14 @@ pub fn load_animation_from_document(
     document: &gltf::Document,
     buffers: &[gltf::buffer::Data],
 ) -> Result<(Skeleton, AnimationSet)> {
-    let skeleton = parse_skeleton(document, buffers)?;
+    let mut skeleton = parse_skeleton(document, buffers)?;
     let mut clips = AnimationSet::default();
     for anim in document.animations() {
         let clip = parse_animation(anim, buffers)?;
         clips.clips.insert(clip.name.clone(), clip);
+    }
+    if let Some(idle) = clips.clips.get(FROG_IDLE) {
+        skeleton.align_rest_pose_to_clip(idle);
     }
     Ok((skeleton, clips))
 }
@@ -270,29 +273,65 @@ impl Skeleton {
         self.skin_matrices(&globals)
     }
 
+    /// Rebase node rest pose and inverse bind matrices to match a clip at t=0.
+    pub fn align_rest_pose_to_clip(&mut self, clip: &AnimationClip) {
+        self.rest_local = self.sample_locals_from_base(&self.rest_local, clip, 0.0);
+        self.rebuild_inverse_bind_from_rest();
+    }
+
     pub fn sample_clip(&self, clip: &AnimationClip, time: f32) -> Vec<Mat4> {
-        let mut locals = self.rest_local.clone();
-        for channel in &clip.channels {
-            if channel.node >= locals.len() {
-                continue;
-            }
-            let (t, r, s) = mat4_trs(locals[channel.node]);
-            let (new_t, new_r, new_s) = match (&channel.property, &channel.values) {
-                (Property::Translation, ChannelValues::Translations(vals)) => {
-                    (sample_vec3(&channel.times, vals, time), r, s)
-                }
-                (Property::Rotation, ChannelValues::Rotations(vals)) => {
-                    (t, sample_quat(&channel.times, vals, time), s)
-                }
-                (Property::Scale, ChannelValues::Scales(vals)) => {
-                    (t, r, sample_vec3(&channel.times, vals, time))
-                }
-                _ => (t, r, s),
-            };
-            locals[channel.node] = mat4_from_trs(new_t, new_r, new_s);
-        }
+        let locals = self.sample_locals(clip, time);
         let globals = self.global_transforms(&locals);
         self.skin_matrices(&globals)
+    }
+
+    fn sample_locals(&self, clip: &AnimationClip, time: f32) -> Vec<Mat4> {
+        self.sample_locals_from_base(&self.rest_local, clip, time)
+    }
+
+    fn sample_locals_from_base(
+        &self,
+        base_locals: &[Mat4],
+        clip: &AnimationClip,
+        time: f32,
+    ) -> Vec<Mat4> {
+        let mut locals = base_locals.to_vec();
+        for node_idx in 0..locals.len() {
+            let (mut t, mut r, mut s) = mat4_trs(locals[node_idx]);
+            let mut touched = false;
+            for channel in &clip.channels {
+                if channel.node != node_idx {
+                    continue;
+                }
+                touched = true;
+                match (&channel.property, &channel.values) {
+                    (Property::Translation, ChannelValues::Translations(vals)) => {
+                        t = sample_vec3(&channel.times, vals, time);
+                    }
+                    (Property::Rotation, ChannelValues::Rotations(vals)) => {
+                        r = sample_quat(&channel.times, vals, time);
+                    }
+                    (Property::Scale, ChannelValues::Scales(vals)) => {
+                        s = sample_vec3(&channel.times, vals, time);
+                    }
+                    _ => {}
+                }
+            }
+            if touched {
+                locals[node_idx] = mat4_from_trs(t, r, s);
+            }
+        }
+        locals
+    }
+
+    fn rebuild_inverse_bind_from_rest(&mut self) {
+        let globals = self.global_transforms(&self.rest_local);
+        for (joint_idx, node) in self.joint_nodes.iter().enumerate() {
+            self.inverse_bind[joint_idx] = globals
+                .get(*node)
+                .and_then(|m| m.inverse())
+                .unwrap_or(Mat4::identity());
+        }
     }
 
     fn global_transforms(&self, locals: &[Mat4]) -> Vec<Mat4> {
@@ -571,6 +610,27 @@ mod tests {
     fn frog_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/models/Frog.glb")
+    }
+
+    #[test]
+    fn frog_idle_at_zero_matches_bind_pose_after_align() {
+        let path = frog_path();
+        let (skel, clips) = load_animation_set(&path).expect("load frog");
+        let idle = &clips.clips[FROG_IDLE];
+        let bind = skel.bind_pose();
+        let at_zero = skel.sample_clip(idle, 0.0);
+        let mut max_diff = 0.0f32;
+        for (a, b) in bind.iter().zip(at_zero.iter()) {
+            for c in 0..4 {
+                for r in 0..4 {
+                    max_diff = max_diff.max((a.cols[c][r] - b.cols[c][r]).abs());
+                }
+            }
+        }
+        assert!(
+            max_diff < 1e-3,
+            "idle at t=0 should match bind pose after align (max diff {max_diff})"
+        );
     }
 
     #[test]
