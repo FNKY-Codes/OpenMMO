@@ -6,7 +6,7 @@ use egui_wgpu::wgpu;
 use egui_wgpu::Renderer as EguiRenderer;
 use egui_winit::winit;
 use egui_winit::State as EguiWinitState;
-use openmmo_common::{ContentPack, EntityKind, Equipment, NpcFootprint, RegionDef, RegionId, WorldEntity};
+use openmmo_common::{ContentPack, EntityKind, Equipment, NpcFootprint, RegionDef, RegionId, TilePos, WorldEntity};
 use openmmo_protocol::{ClientMessage, ServerMessage};
 
 use egui_winit::egui;
@@ -229,6 +229,9 @@ impl EngineApp {
         match &msg {
             ClientMessage::Attack { target, .. } | ClientMessage::CastSpell { target, .. } => {
                 self.combat_opponent = Some(*target);
+                if let Some(local_eid) = self.local_entity_id() {
+                    self.face_entity_toward_target(local_eid, *target);
+                }
             }
             ClientMessage::WalkIntent { .. } => {
                 self.combat_opponent = None;
@@ -384,6 +387,7 @@ impl EngineApp {
                         self.combat_opponent = Some(source);
                     }
                 }
+                self.face_entity_toward_target(source, target);
                 if let Some(entity) = self.entities.iter().find(|e| e.entity_id == source) {
                     if let EntityKind::Npc { npc_id, .. } = &entity.kind {
                         if self
@@ -400,6 +404,24 @@ impl EngineApp {
                     }
                 }
                 self.sync_local_hp();
+            }
+            ServerMessage::AttackSwing { source, target } => {
+                self.face_entity_toward_target(source, target);
+                if let Some(entity) = self.entities.iter().find(|e| e.entity_id == source) {
+                    if let EntityKind::Npc { npc_id, .. } = &entity.kind {
+                        if self
+                            .content
+                            .npc(*npc_id)
+                            .and_then(|d| d.model.as_deref())
+                            .is_some()
+                        {
+                            self.npc_animations
+                                .entry(source)
+                                .or_insert_with(|| AnimationPlayer::new(FROG_IDLE))
+                                .play(FROG_ATTACK, false);
+                        }
+                    }
+                }
             }
             ServerMessage::Death { entity, .. } => {
                 self.ui.combat_log.push(format!("Entity {} died", entity.0));
@@ -502,6 +524,27 @@ impl EngineApp {
             }
             _ => None,
         }
+    }
+
+    fn entity_tile_by_id(&self, entity_id: openmmo_common::EntityId) -> Option<TilePos> {
+        self.entities
+            .iter()
+            .find(|e| e.entity_id == entity_id)
+            .and_then(entity_bounds::entity_tile)
+    }
+
+    fn face_entity_toward_target(
+        &mut self,
+        source: openmmo_common::EntityId,
+        target: openmmo_common::EntityId,
+    ) {
+        let Some(from) = self.entity_tile_by_id(source) else {
+            return;
+        };
+        let Some(toward) = self.entity_tile_by_id(target) else {
+            return;
+        };
+        self.movement_interp.face_toward(source, from, toward);
     }
 
     fn seed_movement_interp(&mut self, _now: Instant) {

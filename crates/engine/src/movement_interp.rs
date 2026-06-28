@@ -162,6 +162,16 @@ impl EntityMovementInterp {
         }
     }
 
+    /// Rotate an entity to face a target tile (e.g. when attacking while stationary).
+    pub fn face_toward(&mut self, id: EntityId, from: TilePos, toward: TilePos) {
+        let Some(yaw) = tile_movement_yaw(from, toward) else {
+            return;
+        };
+        if let Some(entry) = self.entries.get_mut(&id) {
+            entry.facing_yaw = yaw;
+        }
+    }
+
     pub fn is_moving(&self, id: EntityId, now: Instant) -> bool {
         self.entries.get(&id).is_some_and(|entry| {
             entry.from_tile != entry.to_tile && progress(entry.segment_start, now) < 1.0
@@ -243,6 +253,18 @@ mod tests {
         let start = now();
         interp.on_position_change(id, TilePos::new(0, 0), start, None, None);
         interp.on_position_change(id, TilePos::new(1, 0), start, None, None);
+
+        let yaw = interp.visual_facing_yaw(id, start).unwrap();
+        assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 0.01);
+    }
+
+    #[test]
+    fn face_toward_updates_stationary_yaw() {
+        let mut interp = EntityMovementInterp::default();
+        let id = EntityId(1);
+        let start = now();
+        interp.on_position_change(id, TilePos::new(0, 0), start, None, None);
+        interp.face_toward(id, TilePos::new(0, 0), TilePos::new(1, 0));
 
         let yaw = interp.visual_facing_yaw(id, start).unwrap();
         assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 0.01);
