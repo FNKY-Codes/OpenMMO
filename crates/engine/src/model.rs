@@ -268,7 +268,7 @@ pub fn load_skinned_glb_model(
     let (mesh, skeleton, animations) = load_skinned_mesh_data(path)?;
     let footprint_matrix =
         skinned_footprint_matrix(&mesh.vertices, footprint_w, footprint_h, target_height);
-    let (width, height) = skinned_footprint_dims(footprint_w, footprint_h, target_height);
+    let (width, height) = skinned_footprint_dims(&mesh.vertices, footprint_matrix);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Skinned Model Shader"),
@@ -573,29 +573,40 @@ fn skinned_bind_pose_bounds(vertices: &[SkinnedModelVertex]) -> ([f32; 3], [f32;
 
 fn skinned_footprint_matrix(
     vertices: &[SkinnedModelVertex],
-    footprint_w: f32,
-    footprint_h: f32,
+    _footprint_w: f32,
+    _footprint_h: f32,
     target_height: f32,
 ) -> Mat4 {
     let (min, max) = skinned_bind_pose_bounds(vertices);
     let width_x = (max[0] - min[0]).max(0.01);
     let height_y = (max[1] - min[1]).max(0.01);
     let depth_z = (max[2] - min[2]).max(0.01);
+    let max_dim = width_x.max(height_y).max(depth_z);
+    let scale = target_height / max_dim;
 
-    let translate_min = Mat4::translation(-min[0], -min[1], -min[2]);
-    let scale = Mat4::scale(
-        footprint_w / width_x,
-        target_height / height_y,
-        footprint_h / depth_z,
-    );
-    let half_w = footprint_w * 0.5;
-    let half_h = footprint_h * 0.5;
-    let center = Mat4::translation(-half_w, 0.0, -half_h);
-    center.mul(scale).mul(translate_min)
+    let center_x = (min[0] + max[0]) * 0.5;
+    let center_z = (min[2] + max[2]) * 0.5;
+    let base_y = min[1];
+    let translate_to_origin = Mat4::translation(-center_x, -base_y, -center_z);
+    let uniform_scale = Mat4::scale(scale, scale, scale);
+    uniform_scale.mul(translate_to_origin)
 }
 
-fn skinned_footprint_dims(footprint_w: f32, footprint_h: f32, target_height: f32) -> (f32, f32) {
-    (footprint_w.max(footprint_h), target_height)
+fn skinned_footprint_dims(vertices: &[SkinnedModelVertex], matrix: Mat4) -> (f32, f32) {
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    for v in vertices {
+        let (p, w) = matrix.transform_point(Vec3::new(v.position[0], v.position[1], v.position[2]));
+        let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
+        let pos = [p.x * inv_w, p.y * inv_w, p.z * inv_w];
+        for axis in 0..3 {
+            min[axis] = min[axis].min(pos[axis]);
+            max[axis] = max[axis].max(pos[axis]);
+        }
+    }
+    let height = (max[1] - min[1]).max(0.01);
+    let width = (max[0] - min[0]).max(max[2] - min[2]).max(0.01);
+    (width, height)
 }
 
 #[cfg(test)]
@@ -1174,14 +1185,19 @@ mod tests {
     }
 
     #[test]
-    fn frog_footprint_matrix_matches_vertex_normalize() {
+    fn frog_footprint_matrix_preserves_proportions() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/Frog.glb");
         let (mesh, _, _) = load_skinned_mesh_data(&path).expect("load frog mesh");
-        let footprint_w = 1.0;
-        let footprint_h = 1.0;
         let target_height = 1.6;
-        let matrix =
-            skinned_footprint_matrix(&mesh.vertices, footprint_w, footprint_h, target_height);
+        let matrix = skinned_footprint_matrix(&mesh.vertices, 1.0, 1.0, target_height);
+
+        let (min_raw, max_raw) = skinned_bind_pose_bounds(&mesh.vertices);
+        let raw_size = [
+            max_raw[0] - min_raw[0],
+            max_raw[1] - min_raw[1],
+            max_raw[2] - min_raw[2],
+        ];
+        let raw_aspect_xz = raw_size[0] / raw_size[2];
 
         let mut min = [f32::MAX; 3];
         let mut max = [f32::MIN; 3];
@@ -1194,12 +1210,19 @@ mod tests {
                 max[axis] = max[axis].max(pos[axis]);
             }
         }
-        assert!((min[0] + footprint_w * 0.5).abs() < 1e-3);
-        assert!((max[0] - footprint_w * 0.5).abs() < 1e-3);
-        assert!((min[2] + footprint_h * 0.5).abs() < 1e-3);
-        assert!((max[2] - footprint_h * 0.5).abs() < 1e-3);
-        assert!(min[1].abs() < 1e-3);
-        assert!((max[1] - target_height).abs() < 1e-3);
+        let fitted_size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+        let fitted_aspect_xz = fitted_size[0] / fitted_size[2];
+
+        assert!(min[1].abs() < 1e-3, "feet should rest on y=0");
+        let largest_dim = fitted_size[0].max(fitted_size[1]).max(fitted_size[2]);
+        assert!(
+            (largest_dim - target_height).abs() < 0.05,
+            "largest dimension should match target height (got {largest_dim})"
+        );
+        assert!(
+            (raw_aspect_xz - fitted_aspect_xz).abs() < 0.02,
+            "uniform scale should preserve xz aspect ratio"
+        );
     }
 
     #[test]
