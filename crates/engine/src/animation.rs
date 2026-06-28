@@ -297,14 +297,33 @@ impl Skeleton {
 
     fn global_transforms(&self, locals: &[Mat4]) -> Vec<Mat4> {
         let mut globals = vec![Mat4::identity(); locals.len()];
-        for (idx, local) in locals.iter().enumerate() {
-            let global = match self.node_parents.get(idx).copied().flatten() {
-                Some(parent) => globals[parent].mul(*local),
-                None => *local,
-            };
-            globals[idx] = global;
+        let mut computed = vec![false; locals.len()];
+        for idx in 0..locals.len() {
+            self.compute_global(idx, locals, &mut globals, &mut computed);
         }
         globals
+    }
+
+    fn compute_global(
+        &self,
+        idx: usize,
+        locals: &[Mat4],
+        globals: &mut [Mat4],
+        computed: &mut [bool],
+    ) -> Mat4 {
+        if computed[idx] {
+            return globals[idx];
+        }
+        let global = match self.node_parents.get(idx).copied().flatten() {
+            Some(parent) => {
+                let parent_global = self.compute_global(parent, locals, globals, computed);
+                parent_global.mul(locals[idx])
+            }
+            None => locals[idx],
+        };
+        globals[idx] = global;
+        computed[idx] = true;
+        global
     }
 
     fn skin_matrices(&self, globals: &[Mat4]) -> Vec<Mat4> {

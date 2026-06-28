@@ -7,7 +7,7 @@ use egui_wgpu::wgpu::util::DeviceExt;
 
 use crate::animation::{AnimationSet, Skeleton, MAX_JOINTS};
 use crate::entity_bounds;
-use crate::math::Mat4;
+use crate::math::{Mat4, Vec3};
 
 const TARGET_PLAYER_HEIGHT: f32 = 1.8;
 const TARGET_NPC_HEIGHT: f32 = 1.6;
@@ -94,6 +94,8 @@ pub struct SkinnedGlbModel {
     pub bind_group: wgpu::BindGroup,
     pub width: f32,
     pub height: f32,
+    /// Scale/center bind-pose vertices to the NPC footprint without mutating mesh data.
+    pub footprint_matrix: Mat4,
     pub skeleton: Skeleton,
     pub animations: AnimationSet,
     _texture: wgpu::Texture,
@@ -263,10 +265,10 @@ pub fn load_skinned_glb_model(
     footprint_h: f32,
     target_height: f32,
 ) -> Result<SkinnedGlbModel> {
-    let (mut mesh, skeleton, animations) = load_skinned_mesh_data(path)?;
-    normalize_skinned_mesh(&mut mesh.vertices, footprint_w, footprint_h, target_height);
-
-    let (width, height) = compute_skinned_bounds(&mesh.vertices);
+    let (mesh, skeleton, animations) = load_skinned_mesh_data(path)?;
+    let footprint_matrix =
+        skinned_footprint_matrix(&mesh.vertices, footprint_w, footprint_h, target_height);
+    let (width, height) = skinned_footprint_dims(footprint_w, footprint_h, target_height);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Skinned Model Shader"),
@@ -411,6 +413,7 @@ pub fn load_skinned_glb_model(
         bind_group,
         width,
         height,
+        footprint_matrix,
         skeleton,
         animations,
         _texture: texture,
@@ -434,9 +437,10 @@ impl SkinnedGlbModel {
         for (i, bone) in bones.iter().take(MAX_JOINTS).enumerate() {
             bone_cols[i] = bone.cols;
         }
+        let model = instance.model.mul(self.footprint_matrix);
         let uniforms = SkinnedUniforms {
             view_proj: view_proj.cols,
-            model: instance.model.cols,
+            model: model.cols,
             tint: instance.tint,
             bones: bone_cols,
         };
@@ -555,39 +559,7 @@ fn load_skinned_mesh_data(path: &Path) -> Result<(SkinnedMeshData, Skeleton, Ani
     ))
 }
 
-fn normalize_skinned_mesh(
-    vertices: &mut [SkinnedModelVertex],
-    footprint_w: f32,
-    footprint_h: f32,
-    target_height: f32,
-) {
-    let mut min = [f32::MAX; 3];
-    let mut max = [f32::MIN; 3];
-    for v in vertices.iter() {
-        for axis in 0..3 {
-            min[axis] = min[axis].min(v.position[axis]);
-            max[axis] = max[axis].max(v.position[axis]);
-        }
-    }
-    let width_x = (max[0] - min[0]).max(0.01);
-    let height_y = (max[1] - min[1]).max(0.01);
-    let depth_z = (max[2] - min[2]).max(0.01);
-
-    for v in vertices.iter_mut() {
-        v.position[0] = (v.position[0] - min[0]) / width_x * footprint_w;
-        v.position[1] = (v.position[1] - min[1]) / height_y * target_height;
-        v.position[2] = (v.position[2] - min[2]) / depth_z * footprint_h;
-    }
-
-    let half_w = footprint_w * 0.5;
-    let half_h = footprint_h * 0.5;
-    for v in vertices.iter_mut() {
-        v.position[0] -= half_w;
-        v.position[2] -= half_h;
-    }
-}
-
-fn compute_skinned_bounds(vertices: &[SkinnedModelVertex]) -> (f32, f32) {
+fn skinned_bind_pose_bounds(vertices: &[SkinnedModelVertex]) -> ([f32; 3], [f32; 3]) {
     let mut min = [f32::MAX; 3];
     let mut max = [f32::MIN; 3];
     for v in vertices {
@@ -596,9 +568,54 @@ fn compute_skinned_bounds(vertices: &[SkinnedModelVertex]) -> (f32, f32) {
             max[axis] = max[axis].max(v.position[axis]);
         }
     }
-    let height = (max[1] - min[1]).max(0.01);
-    let width = (max[0] - min[0]).max(max[2] - min[2]).max(0.01);
-    (width, height)
+    (min, max)
+}
+
+fn skinned_footprint_matrix(
+    vertices: &[SkinnedModelVertex],
+    footprint_w: f32,
+    footprint_h: f32,
+    target_height: f32,
+) -> Mat4 {
+    let (min, max) = skinned_bind_pose_bounds(vertices);
+    let width_x = (max[0] - min[0]).max(0.01);
+    let height_y = (max[1] - min[1]).max(0.01);
+    let depth_z = (max[2] - min[2]).max(0.01);
+
+    let translate_min = Mat4::translation(-min[0], -min[1], -min[2]);
+    let scale = Mat4::scale(
+        footprint_w / width_x,
+        target_height / height_y,
+        footprint_h / depth_z,
+    );
+    let half_w = footprint_w * 0.5;
+    let half_h = footprint_h * 0.5;
+    let center = Mat4::translation(-half_w, 0.0, -half_h);
+    center.mul(scale).mul(translate_min)
+}
+
+fn skinned_footprint_dims(footprint_w: f32, footprint_h: f32, target_height: f32) -> (f32, f32) {
+    (footprint_w.max(footprint_h), target_height)
+}
+
+#[cfg(test)]
+fn skin_vertex_linear(bones: &[Mat4], joints: [u32; 4], weights: [f32; 4], position: [f32; 3]) -> [f32; 3] {
+    let mut out = Mat4::identity();
+    for i in 0..4 {
+        let bone = bones
+            .get(joints[i] as usize)
+            .copied()
+            .unwrap_or(Mat4::identity());
+        let w = weights[i];
+        for c in 0..4 {
+            for r in 0..4 {
+                out.cols[c][r] += bone.cols[c][r] * w;
+            }
+        }
+    }
+    let (p, w) = out.transform_point(Vec3::new(position[0], position[1], position[2]));
+    let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
+    [p.x * inv_w, p.y * inv_w, p.z * inv_w]
 }
 
 pub fn load_glb_model(
@@ -1135,6 +1152,54 @@ mod tests {
         assert!((max[2] - 1.0).abs() < 1e-5);
         assert!((min[1]).abs() < 1e-5);
         assert!((max[1] - 1.8).abs() < 1e-5);
+    }
+
+    #[test]
+    fn frog_bind_pose_skinning_preserves_vertices() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/Frog.glb");
+        assert!(path.is_file(), "missing Frog.glb at {path:?}");
+        let (mesh, skeleton, _) = load_skinned_mesh_data(&path).expect("load frog mesh");
+        let bones = skeleton.bind_pose();
+        let mut max_err = 0.0f32;
+        for v in &mesh.vertices {
+            let skinned = skin_vertex_linear(bones.as_slice(), v.joints, v.weights, v.position);
+            for axis in 0..3 {
+                max_err = max_err.max((skinned[axis] - v.position[axis]).abs());
+            }
+        }
+        assert!(
+            max_err < 0.05,
+            "bind-pose skinning should preserve vertex positions (max err {max_err})"
+        );
+    }
+
+    #[test]
+    fn frog_footprint_matrix_matches_vertex_normalize() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/Frog.glb");
+        let (mesh, _, _) = load_skinned_mesh_data(&path).expect("load frog mesh");
+        let footprint_w = 1.0;
+        let footprint_h = 1.0;
+        let target_height = 1.6;
+        let matrix =
+            skinned_footprint_matrix(&mesh.vertices, footprint_w, footprint_h, target_height);
+
+        let mut min = [f32::MAX; 3];
+        let mut max = [f32::MIN; 3];
+        for v in &mesh.vertices {
+            let (p, w) = matrix.transform_point(Vec3::new(v.position[0], v.position[1], v.position[2]));
+            let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
+            let pos = [p.x * inv_w, p.y * inv_w, p.z * inv_w];
+            for axis in 0..3 {
+                min[axis] = min[axis].min(pos[axis]);
+                max[axis] = max[axis].max(pos[axis]);
+            }
+        }
+        assert!((min[0] + footprint_w * 0.5).abs() < 1e-3);
+        assert!((max[0] - footprint_w * 0.5).abs() < 1e-3);
+        assert!((min[2] + footprint_h * 0.5).abs() < 1e-3);
+        assert!((max[2] - footprint_h * 0.5).abs() < 1e-3);
+        assert!(min[1].abs() < 1e-3);
+        assert!((max[1] - target_height).abs() < 1e-3);
     }
 
     #[test]
