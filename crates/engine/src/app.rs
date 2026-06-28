@@ -17,7 +17,7 @@ use crate::{
     input::InputState,
     mesh::{default_assets_dir, ModelCache},
     model::resolve_player_model_path,
-    movement_interp::{EntityMovementInterp, ServerClock},
+    movement_interp::EntityMovementInterp,
     renderer::{HoverTarget, Renderer},
     ui::{
         build_context_menu, draw_combat_health_bars, setup_theme, to_client_message, GameUi,
@@ -43,7 +43,6 @@ pub struct EngineApp {
     pub model_cache: ModelCache,
     pub entities: Vec<WorldEntity>,
     pub movement_interp: EntityMovementInterp,
-    server_clock: ServerClock,
     pub region: Option<RegionDef>,
     pub current_region_id: RegionId,
     pub local_player: Option<openmmo_common::PlayerId>,
@@ -73,7 +72,6 @@ impl Default for EngineApp {
             model_cache: ModelCache::new(default_assets_dir()),
             entities: Vec::new(),
             movement_interp: EntityMovementInterp::default(),
-            server_clock: ServerClock::default(),
             region: None,
             current_region_id: RegionId(1),
             local_player: None,
@@ -269,7 +267,7 @@ impl EngineApp {
                     self.local_player = Some(lp);
                 }
                 let now = Instant::now();
-                self.server_clock.reset(tick, now);
+                let _ = tick;
                 self.seed_movement_interp(now);
                 self.sync_local_hp();
             }
@@ -299,10 +297,9 @@ impl EngineApp {
                 self.seed_movement_interp(now);
                 self.sync_local_hp();
             }
-            ServerMessage::StateDelta { tick, entities } => {
+            ServerMessage::StateDelta { entities, .. } => {
                 let now = Instant::now();
-                let segment_start = self.server_clock.on_tick(tick, now);
-                self.merge_entities(entities, segment_start, now);
+                self.merge_entities(entities, now);
                 self.sync_local_hp();
             }
             ServerMessage::PlayerUpdate {
@@ -313,13 +310,6 @@ impl EngineApp {
                 ..
             } => {
                 let now = Instant::now();
-                let segment_start = self
-                    .server_clock
-                    .tick_start(self.server_clock.anchor_tick())
-                    .max(
-                        now.checked_sub(Duration::from_millis(openmmo_common::TICK_MS))
-                            .unwrap_or(now),
-                    );
                 for entity in &mut self.entities {
                     if let EntityKind::Player {
                         player_id: pid,
@@ -330,14 +320,12 @@ impl EngineApp {
                     } = &mut entity.kind
                     {
                         if *pid == player_id {
-                            let footprint = None;
                             self.movement_interp.on_position_change(
                                 entity.entity_id,
                                 position,
-                                segment_start,
                                 now,
                                 self.region.as_ref(),
-                                footprint,
+                                None,
                             );
                             *pos = position;
                             *ehp = hp;
@@ -529,12 +517,7 @@ impl EngineApp {
         }
     }
 
-    fn merge_entities(
-        &mut self,
-        entities: Vec<WorldEntity>,
-        segment_start: Instant,
-        now: Instant,
-    ) {
+    fn merge_entities(&mut self, entities: Vec<WorldEntity>, now: Instant) {
         let region_id = self.current_region_id;
         let filtered: Vec<_> = entities
             .into_iter()
@@ -546,7 +529,6 @@ impl EngineApp {
                 self.movement_interp.on_position_change(
                     entity.entity_id,
                     tile,
-                    segment_start,
                     now,
                     self.region.as_ref(),
                     self.entity_footprint(&entity),
