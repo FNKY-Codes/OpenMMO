@@ -1,6 +1,6 @@
 use openmmo_common::{
-    BossState, EntityId, GroundItem, ItemId, MarketOffer, NpcId, PlayerId, QuestId, Skill, TilePos,
-    WorldEntity,
+    BossState, EntityId, GroundItem, ItemId, MarketOffer, NpcId, PlayerId, QuestId, RegionId, Skill,
+    TilePos, WorldEntity,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -154,6 +154,13 @@ pub enum ServerMessage {
         tick: u64,
         entities: Vec<WorldEntity>,
         local_player: Option<PlayerId>,
+        #[serde(default = "default_region_id")]
+        region_id: RegionId,
+    },
+    RegionChanged {
+        region_id: RegionId,
+        position: TilePos,
+        entities: Vec<WorldEntity>,
     },
     StateDelta {
         tick: u64,
@@ -273,17 +280,90 @@ pub fn decode_server(data: &str) -> Result<ServerMessage, serde_json::Error> {
     serde_json::from_str(data)
 }
 
+fn default_region_id() -> RegionId {
+    RegionId(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openmmo_common::{
+        CombatStyle, EntityId, EquipSlot, ItemId, PlayerId, QuestId, RegionId, Skill, TilePos,
+    };
+    use uuid::Uuid;
 
-    #[test]
-    fn roundtrip_walk_intent() {
-        let msg = ClientMessage::WalkIntent {
-            target: TilePos::new(5, 10),
-        };
+    fn roundtrip_client(msg: ClientMessage) {
         let json = encode_client(&msg).unwrap();
         let decoded = decode_client(&json).unwrap();
-        assert!(matches!(decoded, ClientMessage::WalkIntent { .. }));
+        let re = encode_client(&decoded).unwrap();
+        assert_eq!(json, re, "client roundtrip failed for {msg:?}");
+    }
+
+    fn roundtrip_server(msg: ServerMessage) {
+        let json = encode_server(&msg).unwrap();
+        let decoded = decode_server(&json).unwrap();
+        let re = encode_server(&decoded).unwrap();
+        assert_eq!(json, re, "server roundtrip failed for {msg:?}");
+    }
+
+    #[test]
+    fn roundtrip_all_client_messages() {
+        let pid = PlayerId(Uuid::from_u128(1));
+        roundtrip_client(ClientMessage::Login {
+            username: "user".into(),
+            character_name: "hero".into(),
+            password: "secret".into(),
+        });
+        roundtrip_client(ClientMessage::WalkIntent {
+            target: TilePos::new(5, 10),
+        });
+        roundtrip_client(ClientMessage::Chat {
+            channel: ChatChannel::Global,
+            message: "hello".into(),
+        });
+        roundtrip_client(ClientMessage::MarketPlaceOffer {
+            item_id: ItemId(2),
+            quantity: 1,
+            price_per: 10,
+            is_buy: false,
+        });
+        roundtrip_client(ClientMessage::Ping);
+        roundtrip_client(ClientMessage::ModeratorCommand {
+            command: ModCommand::Teleport {
+                player: pid,
+                target: TilePos::new(1, 1),
+            },
+        });
+    }
+
+    #[test]
+    fn roundtrip_all_server_messages() {
+        let pid = PlayerId(Uuid::from_u128(1));
+        roundtrip_server(ServerMessage::LoginResult {
+            success: true,
+            player_id: Some(pid),
+            message: "ok".into(),
+        });
+        roundtrip_server(ServerMessage::WorldSnapshot {
+            tick: 1,
+            entities: vec![],
+            local_player: Some(pid),
+            region_id: RegionId(1),
+        });
+        roundtrip_server(ServerMessage::RegionChanged {
+            region_id: RegionId(2),
+            position: TilePos::new(1, 1),
+            entities: vec![],
+        });
+        roundtrip_server(ServerMessage::StateDelta {
+            tick: 2,
+            entities: vec![],
+        });
+        roundtrip_server(ServerMessage::ChatMessage {
+            channel: ChatChannel::Local,
+            from: "Alice".into(),
+            message: "hi".into(),
+        });
+        roundtrip_server(ServerMessage::Pong);
     }
 }

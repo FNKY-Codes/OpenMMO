@@ -24,7 +24,7 @@ To ship your own MMO as a separate repository, see [Content pack layout](content
 1. Create `content/quests/my_quest.yaml`
 2. Add dialogue in `content/dialogues/`
 3. Run the validator
-4. Restart the server (content hot-reload planned)
+4. Save files — the server hot-reloads content automatically (`spawn_hot_reload_task` in `crates/server/src/content.rs`)
 
 ## Scavenging Tags
 

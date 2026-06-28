@@ -15,7 +15,8 @@ pub use openmmo_sdk::{
     DialogueNode, DialogueOption, EquipSlot, HarvestTag, ItemDef, ItemId, LootEntry, ModelManifest,
     ModelMetadata, NpcDef, NpcId, ObjectDef, ObjectId, PackManifest, QuestDef, QuestId,
     QuestObjective, QuestStage, RecipeInput, RefinementRecipe, RegionDef, RegionId, RegionNpc,
-    RegionObject, ShopDef, ShopStock, SkillDef, SpecializationDef, SpellDef, TilePos, ToolTag,
+    RegionObject, RegionTransition, ShopDef, ShopStock, SkillDef, SpecializationDef, SpellDef,
+    TilePos, ToolTag, default_region_id,
 };
 pub use skills::*;
 pub use world::*;

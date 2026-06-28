@@ -242,6 +242,7 @@ mod tests {
             tiles: vec![0, 0, 0, 0, 255, 0, 0, 0, 0],
             objects: vec![],
             npcs: vec![],
+            transitions: vec![],
         }
     }
 
@@ -280,6 +281,7 @@ mod tests {
     fn npc_menu_has_talk_and_move() {
         let entity = WorldEntity {
             entity_id: EntityId(1),
+            region_id: openmmo_common::RegionId(1),
             kind: EntityKind::Npc {
                 npc_id: NpcId(100),
                 name: "Guide".into(),
@@ -309,6 +311,7 @@ mod tests {
     fn hostile_npc_menu_has_attack() {
         let entity = WorldEntity {
             entity_id: EntityId(2),
+            region_id: openmmo_common::RegionId(1),
             kind: EntityKind::Npc {
                 npc_id: NpcId(1),
                 name: "Crawler".into(),
@@ -335,6 +338,7 @@ mod tests {
     fn object_menu_uses_content_name_and_scavenge() {
         let entity = WorldEntity {
             entity_id: EntityId(3),
+            region_id: openmmo_common::RegionId(1),
             kind: EntityKind::Object {
                 object_id: ObjectId(1),
                 position: TilePos::new(0, 1),
@@ -359,6 +363,7 @@ mod tests {
     fn ground_item_menu_has_pickup() {
         let entity = WorldEntity {
             entity_id: EntityId(4),
+            region_id: openmmo_common::RegionId(1),
             kind: EntityKind::GroundItem {
                 item_id: ItemId(2),
                 quantity: 3,
@@ -384,6 +389,7 @@ mod tests {
         let local = PlayerId(uuid::Uuid::from_u128(1));
         let entity = WorldEntity {
             entity_id: EntityId(5),
+            region_id: openmmo_common::RegionId(1),
             kind: EntityKind::Player {
                 player_id: local,
                 name: "You".into(),

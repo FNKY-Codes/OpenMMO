@@ -45,6 +45,10 @@ deploy/       Docker Compose and SQL migrations
 docs/         Architecture, roadmap, and self-hosting guides
 ```
 
+## Roadmap
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for phase status, tier priorities, and planned features.
+
 ## Skills (Wasteland Taxonomy)
 
 14 consolidated skills in 4 paths — Survival, Outlands, Workshop, and Operator — including Endurance, Combat, Resilience, Scavenging, Fabrication, Electrics, and more.

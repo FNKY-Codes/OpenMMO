@@ -1,4 +1,4 @@
-use openmmo_common::{ContentPack, EntityId, EquipSlot, HarvestTag, ItemId, BossState, NpcState, PlayerAction, PlayerId, Skill, TilePos, ToolTag};
+use openmmo_common::{ContentPack, EntityId, EquipSlot, HarvestTag, ItemId, BossState, NpcState, PlayerAction, PlayerId, RegionId, Skill, TilePos, ToolTag};
 use openmmo_protocol::{ChatChannel, ClientMessage, LedgerContract, ServerMessage};
 use rand::Rng;
 
@@ -23,7 +23,6 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
     crate::anticheat::PluginApi::on_tick(world);
 
     let mut moved_players = Vec::new();
-    let occupied = world.entity_occupied_tiles();
     let target_positions = entity_positions(world);
     let object_positions = object_positions(world);
     let scavenge_ticks = scavenge_ticks_by_entity(world);
@@ -36,6 +35,10 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
         let content = &world.content;
         let npcs = &world.npcs;
         let boss = &world.boss;
+        let Some(player_region) = world.players.get(&player_id).map(|p| p.region_id) else {
+            continue;
+        };
+        let occupied = world.entity_occupied_tiles_in_region(Some(player_region), None);
         {
             let player = match world.players.get_mut(&player_id) {
                 Some(p) => p,
@@ -139,6 +142,9 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
         for msg in crate::quest::on_visit_tile(world, pid, pos) {
             messages.push((MessageTarget::Player(pid), msg));
         }
+        if let Some(msg) = world.try_region_transition(pid) {
+            messages.push((MessageTarget::Player(pid), msg));
+        }
     }
 
     tick_npc_ai(world, &mut messages);
@@ -164,7 +170,6 @@ pub fn handle_client_message(
 ) -> Vec<(MessageTarget, ServerMessage)> {
     let mut out = Vec::new();
     let route = |msg: ServerMessage| (MessageTarget::Player(player_id), msg);
-    let broadcast = |msg: ServerMessage| (MessageTarget::Broadcast, msg);
     match msg {
         ClientMessage::Login { .. } => {}
         ClientMessage::WalkIntent { target } => {
@@ -274,7 +279,7 @@ pub fn handle_client_message(
             out.extend(
                 handle_chat(world, player_id, channel, message)
                     .into_iter()
-                    .map(broadcast),
+                    .map(|(pid, msg)| (MessageTarget::Player(pid), msg)),
             );
         }
         ClientMessage::TradeRequest { target_player } => {
@@ -987,6 +992,7 @@ fn handle_pickup(
                 quantity: leftover,
                 position: item.position,
                 despawn_ticks: 100,
+                region_id: item.region_id,
             },
         );
     }
@@ -1014,6 +1020,7 @@ fn handle_drop(
         player.inventory.slots[slot] = None;
     }
     let pos = player.position;
+    let region_id = player.region_id;
     drop(player);
     let eid = world.alloc_entity();
     world.ground_items.insert(
@@ -1024,6 +1031,7 @@ fn handle_drop(
             quantity: drop_qty,
             position: pos,
             despawn_ticks: 200,
+            region_id,
         },
     );
     if let Some(p) = world.players.get(&player_id) {
@@ -1100,22 +1108,25 @@ fn handle_bank_withdraw(
 }
 
 fn handle_chat(
-    world: &mut GameWorld,
+    world: &GameWorld,
     player_id: PlayerId,
     channel: ChatChannel,
     message: String,
-) -> Vec<ServerMessage> {
+) -> Vec<(PlayerId, ServerMessage)> {
     if !crate::anticheat::validate_chat(&message) {
-        return vec![ServerMessage::Error {
-            message: "Invalid chat message".into(),
-        }];
+        return vec![(
+            player_id,
+            ServerMessage::Error {
+                message: "Invalid chat message".into(),
+            },
+        )];
     }
     let name = world
         .players
         .get(&player_id)
         .map(|p| p.name.clone())
         .unwrap_or_default();
-    crate::social::broadcast_chat(world, channel, name, message)
+    crate::social::route_chat(world, player_id, channel, name, message)
 }
 
 fn tick_scavenge(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerMessage)>) {
@@ -1589,12 +1600,14 @@ fn handle_npc_loot(
             let qty = rng.gen_range(entry.min_qty..=entry.max_qty);
             let eid = world.alloc_entity();
             let pos = npc.position;
+            let region_id = npc.region_id;
             let ground = openmmo_common::GroundItem {
                 entity_id: eid,
                 item_id: entry.item_id,
                 quantity: qty,
                 position: pos,
                 despawn_ticks: 300,
+                region_id,
             };
             world.ground_items.insert(eid, ground.clone());
             loot.push(ground);
@@ -1779,10 +1792,14 @@ pub fn inventory_update(player: &openmmo_common::PlayerState) -> ServerMessage {
 }
 
 pub fn snapshot_message(world: &GameWorld, local: Option<PlayerId>) -> ServerMessage {
+    let region_id = local
+        .and_then(|pid| world.players.get(&pid).map(|p| p.region_id))
+        .unwrap_or(RegionId(1));
     ServerMessage::WorldSnapshot {
         tick: world.tick,
-        entities: world.entities_snapshot(),
+        entities: world.entities_snapshot_for_region(Some(region_id)),
         local_player: local,
+        region_id,
     }
 }
 
@@ -1901,6 +1918,11 @@ fn handle_unequip(
         }
     }
     if let Some((item_id, quantity, position)) = ground_item {
+        let region_id = world
+            .players
+            .get(&player_id)
+            .map(|p| p.region_id)
+            .unwrap_or(RegionId(1));
         let eid = world.alloc_entity();
         world.ground_items.insert(
             eid,
@@ -1910,6 +1932,7 @@ fn handle_unequip(
                 quantity,
                 position,
                 despawn_ticks: 200,
+                region_id,
             },
         );
     }
@@ -2004,14 +2027,15 @@ fn move_npc_toward(world: &mut GameWorld, entity_id: EntityId, from: TilePos, to
     let Some(npc) = world.npcs.get(&entity_id) else {
         return false;
     };
+    let region_id = npc.region_id;
     let fp = world
         .content
         .npc(npc.npc_id)
         .map(NpcFootprint::from_def)
         .unwrap_or_default();
-    let occupied = world.entity_occupied_tiles_excluding(Some(entity_id));
+    let occupied = world.entity_occupied_tiles_in_region(Some(region_id), Some(entity_id));
     for tile in fp.occupied_tiles(next) {
-        if !world.is_walkable(tile) || occupied.contains(&tile) {
+        if !world.is_walkable_in_region(region_id, tile) || occupied.contains(&tile) {
             return false;
         }
     }
@@ -2126,7 +2150,7 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
 #[cfg(test)]
 mod routing_tests {
     use super::*;
-    use openmmo_common::{Inventory, InventorySlot, ItemId, PlayerState, SkillBook, TilePos};
+    use openmmo_common::{Inventory, InventorySlot, ItemId, PlayerState, RegionId, SkillBook, TilePos};
     use uuid::Uuid;
 
     fn test_player(id: u128) -> PlayerState {
@@ -2153,6 +2177,7 @@ mod routing_tests {
             is_moderator: false,
             last_position: TilePos::new(0, 0),
             ticks_stationary: 1,
+            region_id: RegionId(1),
         };
         player.inventory.slots[0] = Some(InventorySlot {
             item_id: ItemId(2),

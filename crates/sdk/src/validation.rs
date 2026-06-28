@@ -147,6 +147,32 @@ pub fn lint_regions(pack: &ContentPack) -> Vec<String> {
         }
     }
 
+    let known_regions: HashSet<u32> = pack.regions.iter().map(|r| r.id.0).collect();
+    for region in &pack.regions {
+        for transition in &region.transitions {
+            if !in_bounds(&transition.position, region) {
+                errors.push(format!(
+                    "Region {} transition at {:?} is out of bounds",
+                    region.name, transition.position
+                ));
+            }
+            if !known_regions.contains(&transition.target_region.0) {
+                errors.push(format!(
+                    "Region {} transition targets unknown region id {}",
+                    region.name, transition.target_region.0
+                ));
+            }
+            if let Some(target) = pack.region(transition.target_region) {
+                if !in_bounds(&transition.target_spawn, target) {
+                    errors.push(format!(
+                        "Region {} transition spawn {:?} is out of bounds in target region {}",
+                        region.name, transition.target_spawn, target.name
+                    ));
+                }
+            }
+        }
+    }
+
     errors
 }
 
@@ -223,6 +249,7 @@ mod tests {
             tiles: vec![0],
             objects: vec![],
             npcs: vec![],
+            transitions: vec![],
         };
         let errors = lint_region(&region);
         assert!(errors.iter().any(|e| e.contains("tile count mismatch")));
@@ -239,6 +266,7 @@ mod tests {
             tiles: vec![0; 4],
             objects: vec![],
             npcs: vec![],
+            transitions: vec![],
         };
         let errors = lint_region(&region);
         assert!(errors.iter().any(|e| e.contains("spawn")));
@@ -258,6 +286,7 @@ mod tests {
                 npc_id: NpcId(1),
                 position: TilePos::new(10, 0),
             }],
+            transitions: vec![],
         };
         let errors = lint_region(&region);
         assert!(errors.iter().any(|e| e.contains("NPC")));

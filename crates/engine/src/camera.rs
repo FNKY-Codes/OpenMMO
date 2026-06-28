@@ -204,13 +204,14 @@ fn pick_entity_on_tile(
 
 #[cfg(test)]
 mod tests {
-    use openmmo_common::{EntityId, EntityKind, PlayerId, TilePos, WorldEntity};
+    use openmmo_common::{EntityId, EntityKind, PlayerId, RegionId, TilePos, WorldEntity};
 
     use super::Camera;
 
     fn object_at(tile: TilePos) -> WorldEntity {
         WorldEntity {
             entity_id: EntityId(1),
+            region_id: RegionId(1),
             kind: EntityKind::Object {
                 object_id: openmmo_common::ObjectId(1),
                 position: tile,
@@ -221,6 +222,7 @@ mod tests {
     fn local_player_at(tile: TilePos, player_id: PlayerId) -> WorldEntity {
         WorldEntity {
             entity_id: EntityId(2),
+            region_id: RegionId(1),
             kind: EntityKind::Player {
                 player_id,
                 name: "Hero".into(),
