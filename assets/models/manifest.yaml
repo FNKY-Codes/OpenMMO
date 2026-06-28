@@ -9,6 +9,6 @@ models:
   format: gltf
   size_bytes: 30989
 - name: ual1_animations
-  source: UAL1_Standard_RM.glb
+  source: UAL1_Standard.glb
   format: glb
-  size_bytes: 7620504
+  size_bytes: 7618436

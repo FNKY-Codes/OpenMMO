@@ -18,6 +18,9 @@ pub const PLAYER_WALK: &str = "Walk_Loop";
 pub const PLAYER_ATTACK: &str = "Punch_Jab";
 pub const PLAYER_DEATH: &str = "Death01";
 
+/// Root node index in the shared superhero / UAL1 skeleton (strip horizontal drift).
+pub const PLAYER_ROOT_NODE: usize = 64;
+
 #[derive(Debug, Clone)]
 pub struct DeathCorpse {
     pub npc_id: openmmo_common::NpcId,
@@ -230,7 +233,12 @@ impl AnimationPlayer {
         }
     }
 
-    pub fn bone_matrices(&self, skeleton: &Skeleton, clips: &AnimationSet) -> Vec<Mat4> {
+    pub fn bone_matrices(
+        &self,
+        skeleton: &Skeleton,
+        clips: &AnimationSet,
+        root_motion_node: Option<usize>,
+    ) -> Vec<Mat4> {
         let clip_name = self
             .current
             .as_deref()
@@ -247,7 +255,11 @@ impl AnimationPlayer {
         } else {
             self.time.min(clip.duration)
         };
-        skeleton.sample_clip(clip, time)
+        if let Some(root_node) = root_motion_node {
+            skeleton.sample_clip_in_place(clip, time, root_node)
+        } else {
+            skeleton.sample_clip(clip, time)
+        }
     }
 }
 
@@ -307,6 +319,26 @@ impl Skeleton {
 
     pub fn sample_clip(&self, clip: &AnimationClip, time: f32) -> Vec<Mat4> {
         let locals = self.sample_locals(clip, time);
+        let globals = self.global_transforms(&locals);
+        self.skin_matrices(&globals)
+    }
+
+    /// Sample a clip with horizontal root translation removed (in-place locomotion).
+    pub fn sample_clip_in_place(
+        &self,
+        clip: &AnimationClip,
+        time: f32,
+        root_node: usize,
+    ) -> Vec<Mat4> {
+        let mut locals = self.sample_locals(clip, time);
+        let locals_at_start = self.sample_locals(clip, 0.0);
+        if root_node < locals.len() && root_node < locals_at_start.len() {
+            let (t0, _, _) = mat4_trs(locals_at_start[root_node]);
+            let (mut t, r, s) = mat4_trs(locals[root_node]);
+            t[0] = t0[0];
+            t[2] = t0[2];
+            locals[root_node] = mat4_from_trs(t, r, s);
+        }
         let globals = self.global_transforms(&locals);
         self.skin_matrices(&globals)
     }
