@@ -128,6 +128,7 @@ impl NpcModel {
 }
 
 const DEFAULT_PLAYER_MODEL: &str = "Superhero_Male_FullBody.gltf";
+const DEFAULT_PLAYER_ANIMATIONS: &str = "UAL1_Standard_RM.glb";
 const FALLBACK_PLAYER_MODEL: &str = "Pinguin_001.glb";
 pub const MUTANT_TIGER_MODEL: &str = "Tiger_001.glb";
 
@@ -210,7 +211,7 @@ pub fn load_player_model(
     surface_format: wgpu::TextureFormat,
     path: &Path,
 ) -> Result<NpcModel> {
-    if let Ok(model) = load_skinned_glb_model(
+    if let Ok(mut model) = load_skinned_glb_model(
         device,
         queue,
         surface_format,
@@ -219,12 +220,43 @@ pub fn load_player_model(
         PLAYER_MODEL_FOOTPRINT,
         TARGET_PLAYER_HEIGHT,
     ) {
+        attach_player_animations(&mut model);
         entity_bounds::set_player_model_dims(model.width, model.height);
         return Ok(NpcModel::Skinned(model));
     }
     let model = load_glb_model(device, queue, surface_format, path, 1.0, 1.0, TARGET_PLAYER_HEIGHT)?;
     entity_bounds::set_player_model_dims(model.width, model.height);
     Ok(NpcModel::Static(model))
+}
+
+fn attach_player_animations(model: &mut SkinnedGlbModel) {
+    let Some(path) = resolve_model_path(DEFAULT_PLAYER_ANIMATIONS) else {
+        tracing::warn!("player animation file {DEFAULT_PLAYER_ANIMATIONS} not found");
+        return;
+    };
+    match crate::animation::load_animation_clips(&path) {
+        Ok(clips) => {
+            if clips.clips.is_empty() {
+                tracing::warn!(?path, "player animation file contains no clips");
+                return;
+            }
+            model.animations = clips;
+            crate::animation::align_skeleton_to_clip(
+                &mut model.skeleton,
+                &model.animations,
+                crate::animation::PLAYER_IDLE,
+            );
+            model.bind_pose_bones = model.skeleton.bind_pose();
+            tracing::info!(
+                ?path,
+                clips = model.animations.clips.len(),
+                "loaded player animations"
+            );
+        }
+        Err(err) => {
+            tracing::warn!(?path, %err, "failed to load player animations");
+        }
+    }
 }
 
 pub fn load_npc_model(
@@ -1445,6 +1477,16 @@ mod tests {
         let path = resolve_player_model_path().expect("player model should resolve");
         let (_doc, _bufs, images) = gltf::import(&path).expect("import");
         assert!(!images.is_empty(), "superhero model should ship textures");
+    }
+
+    #[test]
+    fn player_animation_library_loads_clips() {
+        let path = resolve_model_path(DEFAULT_PLAYER_ANIMATIONS)
+            .expect("UAL1 animation library should resolve");
+        let clips = crate::animation::load_animation_clips(&path).expect("load clips");
+        assert!(clips.clips.len() >= 40, "expected UAL1 clip library");
+        assert!(clips.clips.contains_key(crate::animation::PLAYER_IDLE));
+        assert!(clips.clips.contains_key(crate::animation::PLAYER_WALK));
     }
 
     #[test]

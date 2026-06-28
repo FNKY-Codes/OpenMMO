@@ -8,3 +8,7 @@ models:
   source: Superhero_Male_FullBody.gltf
   format: gltf
   size_bytes: 30989
+- name: ual1_animations
+  source: UAL1_Standard_RM.glb
+  format: glb
+  size_bytes: 7620504
