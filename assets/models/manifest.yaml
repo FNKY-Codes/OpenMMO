@@ -1,0 +1,6 @@
+version: '1'
+models:
+- name: frog
+  source: frog.obj
+  format: obj
+  size_bytes: 240125

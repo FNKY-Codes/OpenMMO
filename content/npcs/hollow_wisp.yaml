@@ -1,5 +1,6 @@
 id: 3
 name: Hollow Wisp
+model: frog
 max_hp: 12
 prowess: 4
 fortitude: 2

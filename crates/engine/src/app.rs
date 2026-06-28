@@ -34,6 +34,7 @@ pub struct EngineApp {
     input: InputState,
     pub ui: GameUi,
     pub content: ContentPack,
+    pub model_cache: ModelCache,
     pub entities: Vec<WorldEntity>,
     pub movement_interp: EntityMovementInterp,
     pub region: Option<RegionDef>,
@@ -59,6 +60,7 @@ impl Default for EngineApp {
             input: InputState::default(),
             ui: GameUi::default(),
             content: ContentPack::default(),
+            model_cache: ModelCache::new(default_assets_dir()),
             entities: Vec::new(),
             movement_interp: EntityMovementInterp::default(),
             region: None,
@@ -623,15 +625,18 @@ impl EngineApp {
             return;
         };
 
+        let hover = self.compute_hover(renderer);
+
         renderer.render_world_pass(
             &mut encoder,
             &view,
             self.region.as_ref(),
             &self.entities,
+            &self.content,
+            &mut self.model_cache,
             self.local_player,
             &self.movement_interp,
-            &self.content,
-            self.compute_hover(renderer),
+            hover,
         );
 
         let raw_input = egui_state.take_egui_input(window);

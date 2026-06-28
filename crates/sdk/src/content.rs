@@ -86,6 +86,8 @@ impl Inventory {
 pub struct NpcDef {
     pub id: NpcId,
     pub name: String,
+    #[serde(default)]
+    pub model: Option<String>,
     pub max_hp: u32,
     pub prowess: u32,
     pub fortitude: u32,
