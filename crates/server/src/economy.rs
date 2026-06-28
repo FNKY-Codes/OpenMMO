@@ -464,7 +464,7 @@ pub fn complete_ledger_kill(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openmmo_common::{ContentPack, Inventory, ItemId, PlayerState, SkillBook, TilePos};
+    use openmmo_common::{ContentPack, Inventory, ItemId, PlayerState, RegionId, SkillBook, TilePos};
 
     use uuid::Uuid;
 
@@ -492,6 +492,7 @@ mod tests {
             is_moderator: false,
             last_position: TilePos::new(0, 0),
             ticks_stationary: 1,
+            region_id: RegionId(1),
         }
     }
 
@@ -601,5 +602,46 @@ mod tests {
         });
         match_offers(&mut world);
         assert_eq!(world.economy.market_offers.len(), 2);
+    }
+
+    #[test]
+    fn sell_offer_debits_inventory_and_match_transfers_to_buyer() {
+        let mut world = GameWorld::new(ContentPack::default());
+        let buyer_id = PlayerId(Uuid::from_u128(1));
+        let seller_id = PlayerId(Uuid::from_u128(2));
+        let mut buyer = test_player(1, "buyer");
+        buyer.inventory.slots[0] = Some(openmmo_common::InventorySlot {
+            item_id: ItemId(1),
+            quantity: 100,
+        });
+        let mut seller = test_player(2, "seller");
+        seller.inventory.slots[0] = Some(openmmo_common::InventorySlot {
+            item_id: ItemId(2),
+            quantity: 10,
+        });
+        world.players.insert(buyer_id, buyer);
+        world.players.insert(seller_id, seller);
+
+        let msgs = handle_market_offer(&mut world, seller_id, ItemId(2), 5, 15, false);
+        assert!(!msgs.is_empty());
+        let seller_inv_qty: u32 = world.players.get(&seller_id).unwrap().inventory.slots[0]
+            .as_ref()
+            .map(|s| s.quantity)
+            .unwrap_or(0);
+        assert_eq!(seller_inv_qty, 5);
+
+        let _ = handle_market_offer(&mut world, buyer_id, ItemId(2), 5, 20, true);
+        match_offers(&mut world);
+
+        assert!(world.economy.market_offers.is_empty());
+        let buyer = world.players.get(&buyer_id).unwrap();
+        assert!(
+            buyer
+                .inventory
+                .slots
+                .iter()
+                .flatten()
+                .any(|s| s.item_id == ItemId(2) && s.quantity == 5)
+        );
     }
 }

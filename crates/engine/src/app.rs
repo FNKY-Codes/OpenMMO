@@ -5,7 +5,7 @@ use egui_wgpu::wgpu;
 use egui_wgpu::Renderer as EguiRenderer;
 use egui_winit::winit;
 use egui_winit::State as EguiWinitState;
-use openmmo_common::{ContentPack, EntityKind, Equipment, RegionDef, WorldEntity};
+use openmmo_common::{ContentPack, EntityKind, Equipment, RegionDef, RegionId, WorldEntity};
 use openmmo_protocol::{ClientMessage, ServerMessage};
 
 use egui_winit::egui;
@@ -13,7 +13,7 @@ use egui_winit::egui;
 use crate::{
     entity_bounds,
     input::InputState,
-    mesh::{default_assets_dir, ModelCache},
+    model::resolve_player_model_path,
     movement_interp::EntityMovementInterp,
     renderer::{HoverTarget, Renderer},
     ui::{build_context_menu, draw_combat_health_bars, setup_theme, to_client_message, GameUi, UiAction},
@@ -38,6 +38,7 @@ pub struct EngineApp {
     pub entities: Vec<WorldEntity>,
     pub movement_interp: EntityMovementInterp,
     pub region: Option<RegionDef>,
+    pub current_region_id: RegionId,
     pub local_player: Option<openmmo_common::PlayerId>,
     pub inventory: openmmo_common::Inventory,
     pub bank: openmmo_common::Inventory,
@@ -50,6 +51,7 @@ pub struct EngineApp {
     pub net_tx: Option<Sender<NetCommand>>,
     pub net_rx: Option<Receiver<ServerMessage>>,
     pointer_over_ui: bool,
+    pub player_model_path: Option<std::path::PathBuf>,
 }
 
 impl Default for EngineApp {
@@ -62,6 +64,7 @@ impl Default for EngineApp {
             entities: Vec::new(),
             movement_interp: EntityMovementInterp::default(),
             region: None,
+            current_region_id: RegionId(1),
             local_player: None,
             inventory: openmmo_common::Inventory::new(openmmo_common::INVENTORY_SIZE),
             bank: openmmo_common::Inventory::new(openmmo_common::BANK_SIZE),
@@ -74,6 +77,7 @@ impl Default for EngineApp {
             net_tx: None,
             net_rx: None,
             pointer_over_ui: false,
+            player_model_path: resolve_player_model_path(),
         }
     }
 }
@@ -90,7 +94,11 @@ impl EngineApp {
                 )
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
         );
-        let mut renderer = pollster::block_on(Renderer::new(window.clone()));
+        let mut renderer = pollster::block_on(Renderer::new(
+            window.clone(),
+            self.player_model_path.as_deref(),
+            &self.content,
+        ));
         let egui_ctx = egui::Context::default();
         setup_theme(&egui_ctx);
         let mut egui_state = EguiWinitState::new(
@@ -236,11 +244,38 @@ impl EngineApp {
             ServerMessage::WorldSnapshot {
                 entities,
                 local_player,
+                region_id,
                 ..
             } => {
-                self.merge_entities(entities);
+                self.current_region_id = region_id;
+                self.region = self.content.region(region_id).cloned();
+                self.entities = entities;
                 if let Some(lp) = local_player {
                     self.local_player = Some(lp);
+                }
+                self.sync_local_hp();
+            }
+            ServerMessage::RegionChanged {
+                region_id,
+                position,
+                entities,
+            } => {
+                self.current_region_id = region_id;
+                self.region = self.content.region(region_id).cloned();
+                self.entities = entities;
+                if let Some(lp) = self.local_player {
+                    for entity in &mut self.entities {
+                        if let EntityKind::Player {
+                            player_id,
+                            position: pos,
+                            ..
+                        } = &mut entity.kind
+                        {
+                            if *player_id == lp {
+                                *pos = position;
+                            }
+                        }
+                    }
                 }
                 self.sync_local_hp();
             }
@@ -412,8 +447,13 @@ impl EngineApp {
 
     fn merge_entities(&mut self, entities: Vec<WorldEntity>) {
         let now = Instant::now();
-        let ids: std::collections::HashSet<_> = entities.iter().map(|e| e.entity_id).collect();
-        for entity in entities {
+        let region_id = self.current_region_id;
+        let filtered: Vec<_> = entities
+            .into_iter()
+            .filter(|e| e.region_id == region_id)
+            .collect();
+        let ids: std::collections::HashSet<_> = filtered.iter().map(|e| e.entity_id).collect();
+        for entity in filtered {
             if let Some(tile) = entity_bounds::entity_tile(&entity) {
                 self.movement_interp
                     .on_position_change(entity.entity_id, tile, now);
@@ -537,6 +577,7 @@ impl EngineApp {
             &self.entities,
             self.region.as_ref(),
             self.local_player,
+            &self.content,
         ) {
             return Some(HoverTarget::Entity(entity_id));
         }
@@ -566,6 +607,7 @@ impl EngineApp {
                     entity.entity_id,
                     now,
                     self.region.as_ref(),
+                    None,
                 ) {
                     renderer.camera_mut().center_on_world(cx, cz);
                 } else if let Some(position) = entity_bounds::entity_tile(entity) {
@@ -638,6 +680,7 @@ impl EngineApp {
                         &self.entities,
                         &self.movement_interp,
                         self.region.as_ref(),
+                        &self.content,
                         vp,
                         renderer.gpu().config.width,
                         renderer.gpu().config.height,
@@ -661,11 +704,8 @@ impl EngineApp {
         }
 
         match ui_action {
-            UiAction::Chat(msg) => {
-                self.send(ClientMessage::Chat {
-                    channel: openmmo_protocol::ChatChannel::Local,
-                    message: msg,
-                });
+            UiAction::Chat { channel, message } => {
+                self.send(ClientMessage::Chat { channel, message });
             }
             UiAction::DropItem(slot) => {
                 self.send(ClientMessage::DropItem { slot, quantity: 1 });
@@ -793,6 +833,7 @@ impl EngineApp {
                     &self.entities,
                     self.region.as_ref(),
                     self.local_player,
+                    &self.content,
                 );
                 let screen_pos =
                     egui::pos2(self.input.mouse_x / pixels_per_point, self.input.mouse_y / pixels_per_point);
@@ -825,6 +866,7 @@ impl EngineApp {
                 &self.entities,
                 self.region.as_ref(),
                 self.local_player,
+                &self.content,
             ) {
                 if let Some(msg) = self.handle_entity_click(entity_id) {
                     self.close_shop_on_world_interaction();

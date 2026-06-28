@@ -1,9 +1,11 @@
 id: 1
-name: Meadow Crawler
+name: Mutant Tiger
 max_hp: 8
 prowess: 2
 fortitude: 1
 aggro_range: 3
+footprint_w: 2
+footprint_h: 2
 respawn_ticks: 15
 attack_ticks: 3
 loot_table:

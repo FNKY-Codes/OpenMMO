@@ -170,6 +170,37 @@ pub fn find_attack_path(
     best_path
 }
 
+/// Shortest path from `start` to a walkable tile adjacent to any tile in an NPC footprint.
+pub fn find_attack_path_to_footprint(
+    start: TilePos,
+    los_tile: TilePos,
+    footprint: openmmo_common::NpcFootprint,
+    walkable: &std::collections::HashSet<TilePos>,
+) -> Vec<TilePos> {
+    if footprint.player_adjacent(start, los_tile) {
+        return vec![start];
+    }
+
+    let mut best_path = Vec::new();
+    for occupied in footprint.occupied_tiles(los_tile) {
+        for (dx, dy) in ADJACENT_DIRECTIONS {
+            let adj = TilePos::new(occupied.x + dx, occupied.y + dy);
+            if !walkable.contains(&adj) {
+                continue;
+            }
+            let path = find_path(start, adj, walkable);
+            if path.len() > 1 {
+                let cost = path_cost(&path);
+                let best_cost = path_cost(&best_path);
+                if best_path.is_empty() || cost < best_cost {
+                    best_path = path;
+                }
+            }
+        }
+    }
+    best_path
+}
+
 fn reconstruct(came_from: &HashMap<TilePos, TilePos>, mut current: TilePos) -> Vec<TilePos> {
     let mut path = vec![current];
     while let Some(&prev) = came_from.get(&current) {

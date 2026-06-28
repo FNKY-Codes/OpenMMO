@@ -948,4 +948,14 @@ tiles:
 - 0
 - 1
 - 0
+transitions:
+- position:
+    plane: 0
+    x: 29
+    y: 15
+  target_region: 2
+  target_spawn:
+    plane: 0
+    x: 1
+    y: 7
 width: 30

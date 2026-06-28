@@ -3,7 +3,7 @@ mod net;
 use std::sync::mpsc;
 use std::thread;
 
-use openmmo_common::load_content;
+use openmmo_common::{load_content, RegionId};
 use openmmo_engine::{EngineApp, NetCommand};
 use openmmo_protocol::ServerMessage;
 use tracing_subscriber::EnvFilter;
@@ -29,7 +29,8 @@ fn main() -> anyhow::Result<()> {
 
     let mut app = EngineApp::default();
     app.content = content;
-    app.region = region;
+    app.region = region.clone();
+    app.current_region_id = region.as_ref().map(|r| r.id).unwrap_or(RegionId(1));
     app.net_tx = Some(net_tx);
     app.net_rx = Some(msg_rx);
 

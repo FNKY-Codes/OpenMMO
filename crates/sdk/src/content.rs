@@ -95,7 +95,15 @@ pub struct NpcDef {
     pub respawn_ticks: u32,
     #[serde(default = "default_attack_ticks")]
     pub attack_ticks: u32,
+    #[serde(default = "default_footprint_one")]
+    pub footprint_w: u32,
+    #[serde(default = "default_footprint_one")]
+    pub footprint_h: u32,
     pub loot_table: Vec<LootEntry>,
+}
+
+fn default_footprint_one() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +154,13 @@ pub struct SpellDef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegionTransition {
+    pub position: TilePos,
+    pub target_region: RegionId,
+    pub target_spawn: TilePos,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegionDef {
     pub id: RegionId,
     pub name: String,
@@ -155,6 +170,8 @@ pub struct RegionDef {
     pub tiles: Vec<u8>,
     pub objects: Vec<RegionObject>,
     pub npcs: Vec<RegionNpc>,
+    #[serde(default)]
+    pub transitions: Vec<RegionTransition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

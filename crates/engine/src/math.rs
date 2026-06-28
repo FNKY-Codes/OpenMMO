@@ -118,6 +118,41 @@ impl Mat4 {
         out
     }
 
+    pub fn translation(x: f32, y: f32, z: f32) -> Self {
+        let mut m = Self::identity();
+        m.cols[3][0] = x;
+        m.cols[3][1] = y;
+        m.cols[3][2] = z;
+        m
+    }
+
+    pub fn scale(x: f32, y: f32, z: f32) -> Self {
+        Self {
+            cols: [
+                [x, 0.0, 0.0, 0.0],
+                [0.0, y, 0.0, 0.0],
+                [0.0, 0.0, z, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
+    pub fn from_gltf(m: [[f32; 4]; 4]) -> Self {
+        Self { cols: m }
+    }
+
+    pub fn rotation_y(angle: f32) -> Self {
+        let (s, c) = angle.sin_cos();
+        Self {
+            cols: [
+                [c, 0.0, -s, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [s, 0.0, c, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
     pub fn transform_point(self, p: Vec3) -> (Vec3, f32) {
         let x =
             self.cols[0][0] * p.x + self.cols[1][0] * p.y + self.cols[2][0] * p.z + self.cols[3][0];
@@ -357,6 +392,14 @@ mod tests {
             ndc_y > 0.0,
             "world +Y should project to upper NDC, got {ndc_y}"
         );
+    }
+
+    #[test]
+    fn rotation_y_maps_z_to_x() {
+        let r = Mat4::rotation_y(std::f32::consts::FRAC_PI_2);
+        let (p, _) = r.transform_point(Vec3::new(0.0, 0.0, 1.0));
+        assert!((p.x - 1.0).abs() < 1e-4);
+        assert!(p.z.abs() < 1e-4);
     }
 
     #[test]

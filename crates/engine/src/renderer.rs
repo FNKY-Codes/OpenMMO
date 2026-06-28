@@ -1,13 +1,17 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
-use openmmo_common::{EntityId, RegionDef, TilePos, WorldEntity};
+use openmmo_common::{ContentPack, EntityId, NpcFootprint, NpcId, RegionDef, TilePos, WorldEntity};
 
 use crate::camera::Camera;
 use crate::entity_bounds;
 use crate::math::Vec3;
-use crate::mesh::{Mesh, ModelCache};
+use crate::model::{
+    entity_model_matrix, load_npc_model, load_player_model, resolve_model_path, GlbModel,
+    ModelDraw, ModelTarget, MUTANT_TIGER_MODEL, MUTANT_TIGER_NPC_ID,
+};
 use crate::movement_interp::EntityMovementInterp;
 
 #[repr(C)]
@@ -72,10 +76,17 @@ pub struct Renderer {
     scratch_transparent_outline_vertices: Vec<Vertex>,
     scratch_transparent_draws: Vec<TransparentDraw>,
     scratch_upload: Vec<Vertex>,
+    player_model: Option<GlbModel>,
+    npc_models: HashMap<NpcId, GlbModel>,
+    scratch_model_draws: Vec<ModelDraw>,
 }
 
 impl Renderer {
-    pub async fn new(window: std::sync::Arc<egui_winit::winit::window::Window>) -> Self {
+    pub async fn new(
+        window: std::sync::Arc<egui_winit::winit::window::Window>,
+        player_model_path: Option<&std::path::Path>,
+        content: &ContentPack,
+    ) -> Self {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
@@ -312,6 +323,54 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
+        let player_model = player_model_path.and_then(|path| {
+            match load_player_model(&device, &queue, format, path) {
+                Ok(model) => {
+                    eprintln!("OpenMMO: loaded player model from {}", path.display());
+                    tracing::info!(?path, "loaded player model");
+                    Some(model)
+                }
+                Err(err) => {
+                    eprintln!(
+                        "OpenMMO: failed to load player model from {}: {err}",
+                        path.display()
+                    );
+                    tracing::warn!(?path, %err, "failed to load player model");
+                    None
+                }
+            }
+        });
+
+        let mut npc_models = HashMap::new();
+        if let Some(path) = resolve_model_path(MUTANT_TIGER_MODEL) {
+            let footprint = content
+                .npc(MUTANT_TIGER_NPC_ID)
+                .map(NpcFootprint::from_def)
+                .unwrap_or_default();
+            match load_npc_model(
+                &device,
+                &queue,
+                format,
+                MUTANT_TIGER_NPC_ID,
+                &path,
+                footprint,
+            ) {
+                Ok(model) => {
+                    eprintln!(
+                        "OpenMMO: loaded Mutant Tiger model from {}",
+                        path.display()
+                    );
+                    npc_models.insert(MUTANT_TIGER_NPC_ID, model);
+                }
+                Err(err) => {
+                    eprintln!(
+                        "OpenMMO: failed to load Mutant Tiger model from {}: {err}",
+                        path.display()
+                    );
+                }
+            }
+        }
+
         Self {
             window,
             gpu: GpuState {
@@ -337,6 +396,9 @@ impl Renderer {
             scratch_transparent_outline_vertices: Vec::with_capacity(512),
             scratch_transparent_draws: Vec::with_capacity(64),
             scratch_upload: Vec::with_capacity(8192),
+            player_model,
+            npc_models,
+            scratch_model_draws: Vec::with_capacity(32),
         }
     }
 
@@ -431,6 +493,7 @@ impl Renderer {
         model_cache: &mut ModelCache,
         local_player: Option<openmmo_common::PlayerId>,
         movement_interp: &EntityMovementInterp,
+        content: &ContentPack,
         hover: Option<HoverTarget>,
     ) {
         let vp = self
@@ -476,11 +539,13 @@ impl Renderer {
         let mut transparent_outline_vertices =
             std::mem::take(&mut self.scratch_transparent_outline_vertices);
         let mut transparent_draws = std::mem::take(&mut self.scratch_transparent_draws);
+        let mut model_draws = std::mem::take(&mut self.scratch_model_draws);
         opaque_entity_vertices.clear();
         opaque_outline_vertices.clear();
         transparent_entity_vertices.clear();
         transparent_outline_vertices.clear();
         transparent_draws.clear();
+        model_draws.clear();
 
         let now = Instant::now();
         let mut local_entity = None;
@@ -506,7 +571,9 @@ impl Renderer {
                     &mut transparent_entity_vertices,
                     &mut transparent_outline_vertices,
                     &mut transparent_draws,
+                    &mut model_draws,
                     local_player,
+                    content,
                 );
             }
         }
@@ -524,7 +591,9 @@ impl Renderer {
                 &mut transparent_entity_vertices,
                 &mut transparent_outline_vertices,
                 &mut transparent_draws,
+                &mut model_draws,
                 local_player,
+                content,
             );
         }
 
@@ -550,6 +619,7 @@ impl Renderer {
                 region,
                 entities,
                 movement_interp,
+                content,
                 now,
                 &mut hover_outline_vertices,
             );
@@ -563,6 +633,7 @@ impl Renderer {
         self.scratch_transparent_entity_vertices = transparent_entity_vertices;
         self.scratch_transparent_outline_vertices = transparent_outline_vertices;
         self.scratch_transparent_draws = transparent_draws;
+        self.scratch_model_draws = model_draws;
 
         if !self.scratch_upload.is_empty() {
             let byte_offset =
@@ -607,6 +678,16 @@ impl Renderer {
             render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.draw(0..opaque_outline_base, 0..1);
+        }
+
+        for draw in &self.scratch_model_draws {
+            let model = match draw.target {
+                ModelTarget::Player => self.player_model.as_ref(),
+                ModelTarget::Npc(id) => self.npc_models.get(&id),
+            };
+            if let Some(model) = model {
+                model.draw_one(&mut render_pass, &self.gpu.queue, vp, draw);
+            }
         }
 
         if opaque_outline_count > 0 {
@@ -665,6 +746,7 @@ impl Renderer {
         region: Option<&RegionDef>,
         entities: &[WorldEntity],
         movement_interp: &EntityMovementInterp,
+        content: &ContentPack,
         now: Instant,
         vertices: &mut Vec<Vertex>,
     ) {
@@ -672,21 +754,29 @@ impl Renderer {
             HoverTarget::Entity(entity_id) => {
                 let entity = entities.iter().find(|e| e.entity_id == entity_id);
                 if let Some(entity) = entity {
+                    let footprint = entity_footprint(content, entity);
                     let visual_base = movement_interp
-                        .visual_center(entity.entity_id, now, region)
+                        .visual_center(entity.entity_id, now, region, footprint)
                         .or_else(|| {
                             entity_bounds::entity_tile(entity).map(|tile| {
-                                let [cx, _, cz] = Self::tile_center(tile);
                                 let surface_y = Self::tile_surface_height(tile, region);
-                                [cx, surface_y, cz]
+                                footprint
+                                    .unwrap_or_default()
+                                    .world_center(tile, surface_y)
                             })
                         });
                     if let Some([cx, surface_y, cz]) = visual_base {
                         let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
+                        let fp = footprint.unwrap_or_default();
                         let scale = 1.08;
                         let center = [cx, surface_y + height * 0.5, cz];
-                        let size = [width * scale, height * scale, width * scale];
+                        let size = [
+                            fp.width as f32 * scale,
+                            height * scale,
+                            fp.height as f32 * scale,
+                        ];
                         add_box_edge_lines(center, size, HOVER_OUTLINE_COLOR, vertices, true);
+                        let _ = width;
                     }
                 }
             }
@@ -726,14 +816,23 @@ impl Renderer {
         for y in 0..region.height {
             for x in 0..region.width {
                 let idx = (y * region.width + x) as usize;
+                let tile_pos = TilePos::new(x as i32, y as i32);
                 let tile_type = region.tiles.get(idx).copied().unwrap_or(0);
-                let (height, color) = match tile_type {
-                    0 => (0.12, [0.25, 0.55, 0.28, 1.0]),
-                    1 => (0.2, [0.45, 0.38, 0.25, 1.0]),
-                    2 => (0.05, [0.2, 0.35, 0.65, 1.0]),
-                    _ => (0.1, [0.35, 0.35, 0.35, 1.0]),
+                let is_portal = region
+                    .transitions
+                    .iter()
+                    .any(|t| t.position.x == tile_pos.x && t.position.y == tile_pos.y);
+                let (height, color) = if is_portal {
+                    (0.18, [0.58, 0.22, 0.78, 1.0])
+                } else {
+                    match tile_type {
+                        0 => (0.12, [0.25, 0.55, 0.28, 1.0]),
+                        1 => (0.2, [0.45, 0.38, 0.25, 1.0]),
+                        2 => (0.05, [0.2, 0.35, 0.65, 1.0]),
+                        _ => (0.1, [0.35, 0.35, 0.35, 1.0]),
+                    }
                 };
-                self.add_tile_block(TilePos::new(x as i32, y as i32), height, color, vertices);
+                self.add_tile_block(tile_pos, height, color, vertices);
             }
         }
     }
@@ -752,17 +851,25 @@ impl Renderer {
         transparent_entity_vertices: &mut Vec<Vertex>,
         transparent_outline_vertices: &mut Vec<Vertex>,
         transparent_draws: &mut Vec<TransparentDraw>,
+        model_draws: &mut Vec<ModelDraw>,
         local_player: Option<openmmo_common::PlayerId>,
+        content: &ContentPack,
     ) {
+        let footprint = entity_footprint(content, entity);
         let visual_base = movement_interp
-            .visual_center(entity.entity_id, now, region)
+            .visual_center(entity.entity_id, now, region, footprint)
             .or_else(|| {
                 entity_bounds::entity_tile(entity).map(|tile| {
-                    let [cx, _, cz] = Self::tile_center(tile);
                     let surface_y = Self::tile_surface_height(tile, region);
-                    [cx, surface_y, cz]
+                    footprint
+                        .unwrap_or_default()
+                        .world_center(tile, surface_y)
                 })
             });
+
+        let yaw = movement_interp
+            .visual_facing_yaw(entity.entity_id, now)
+            .unwrap_or(0.0);
 
         match &entity.kind {
             openmmo_common::EntityKind::Player {
@@ -772,6 +879,20 @@ impl Renderer {
                 let Some([cx, surface_y, cz]) = visual_base else {
                     return;
                 };
+                if self.player_model.is_some() {
+                    let is_local = Some(*player_id) == local_player;
+                    let tint = if is_local {
+                        [1.0, 1.0, 1.0, 1.0]
+                    } else {
+                        [0.95, 0.9, 0.75, 1.0]
+                    };
+                    model_draws.push(ModelDraw {
+                        target: ModelTarget::Player,
+                        model: entity_model_matrix([cx, surface_y, cz], yaw),
+                        tint,
+                    });
+                    return;
+                }
                 let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
                 let color = if Some(*player_id) == local_player {
                     [0.2, 0.6, 1.0, 1.0]
@@ -795,8 +916,16 @@ impl Renderer {
                 let Some([cx, surface_y, cz]) = visual_base else {
                     return;
                 };
-                let alive = *hp > 0;
-                let fallback_color = if alive {
+                if self.npc_models.contains_key(npc_id) && *hp > 0 {
+                    model_draws.push(ModelDraw {
+                        target: ModelTarget::Npc(*npc_id),
+                        model: entity_model_matrix([cx, surface_y, cz], yaw),
+                        tint: [1.0, 1.0, 1.0, 1.0],
+                    });
+                    return;
+                }
+                let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
+                let color = if *hp > 0 {
                     [0.85, 0.2, 0.2, 1.0]
                 } else {
                     [0.4, 0.4, 0.4, 0.6]
@@ -1156,5 +1285,14 @@ fn push_line(a: [f32; 3], b: [f32; 3], color: [f32; 4], vertices: &mut Vec<Verte
 fn push_tri(a: [f32; 3], b: [f32; 3], c: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
     for position in [a, b, c] {
         vertices.push(Vertex { position, color });
+    }
+}
+
+fn entity_footprint(content: &ContentPack, entity: &WorldEntity) -> Option<NpcFootprint> {
+    match &entity.kind {
+        openmmo_common::EntityKind::Npc { npc_id, .. } => {
+            content.npc(*npc_id).map(NpcFootprint::from_def)
+        }
+        _ => None,
     }
 }
