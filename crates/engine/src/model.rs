@@ -5,6 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 
+use crate::animation::{AnimationSet, Skeleton, MAX_JOINTS};
 use crate::entity_bounds;
 use crate::math::Mat4;
 
@@ -32,6 +33,7 @@ pub struct ModelDraw {
     pub target: ModelTarget,
     pub model: Mat4,
     pub tint: [f32; 4],
+    pub entity_id: Option<openmmo_common::EntityId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,6 +65,66 @@ struct MeshData {
 /// Back-compat alias for the player mesh loader.
 pub type PlayerModel = GlbModel;
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct SkinnedModelVertex {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
+    pub joints: [u32; 4],
+    pub weights: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct SkinnedUniforms {
+    pub view_proj: [[f32; 4]; 4],
+    pub model: [[f32; 4]; 4],
+    pub tint: [f32; 4],
+    pub bones: [[[f32; 4]; 4]; MAX_JOINTS],
+}
+
+pub struct SkinnedGlbModel {
+    pub pipeline: wgpu::RenderPipeline,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub index_count: u32,
+    pub uniform_buffer: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+    pub width: f32,
+    pub height: f32,
+    pub skeleton: Skeleton,
+    pub animations: AnimationSet,
+    _texture: wgpu::Texture,
+    _sampler: wgpu::Sampler,
+}
+
+pub enum NpcModel {
+    Static(GlbModel),
+    Skinned(SkinnedGlbModel),
+}
+
+impl NpcModel {
+    pub fn width(&self) -> f32 {
+        match self {
+            Self::Static(m) => m.width,
+            Self::Skinned(m) => m.width,
+        }
+    }
+
+    pub fn height(&self) -> f32 {
+        match self {
+            Self::Static(m) => m.height,
+            Self::Skinned(m) => m.height,
+        }
+    }
+
+    pub fn is_skinned(&self) -> bool {
+        matches!(self, Self::Skinned(_))
+    }
+}
+
 const DEFAULT_PLAYER_MODEL: &str = "Pinguin_001.glb";
 pub const MUTANT_TIGER_MODEL: &str = "Tiger_001.glb";
 
@@ -86,6 +148,26 @@ pub fn resolve_model_path(filename: &str) -> Option<PathBuf> {
     for candidate in model_candidates(filename) {
         if candidate.is_file() {
             return candidate.canonicalize().ok().or(Some(candidate));
+        }
+    }
+    None
+}
+
+/// Resolve an NPC content model name to a GLB path (`frog` -> `frog.glb` / `Frog.glb`).
+pub fn resolve_npc_glb_path(name: &str) -> Option<PathBuf> {
+    let capitalized = {
+        let mut chars = name.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        }
+    };
+    for filename in [
+        format!("{name}.glb"),
+        format!("{capitalized}.glb"),
+    ] {
+        if let Some(path) = resolve_model_path(&filename) {
+            return Some(path);
         }
     }
     None
@@ -149,6 +231,374 @@ pub fn load_npc_model(
     )?;
     entity_bounds::set_npc_model_dims(npc_id, model.width, model.height);
     Ok(model)
+}
+
+pub fn load_skinned_npc_model(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    surface_format: wgpu::TextureFormat,
+    npc_id: openmmo_common::NpcId,
+    path: &Path,
+    footprint: openmmo_common::NpcFootprint,
+) -> Result<SkinnedGlbModel> {
+    let model = load_skinned_glb_model(
+        device,
+        queue,
+        surface_format,
+        path,
+        footprint.width as f32,
+        footprint.height as f32,
+        TARGET_NPC_HEIGHT,
+    )?;
+    entity_bounds::set_npc_model_dims(npc_id, model.width, model.height);
+    Ok(model)
+}
+
+pub fn load_skinned_glb_model(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    surface_format: wgpu::TextureFormat,
+    path: &Path,
+    footprint_w: f32,
+    footprint_h: f32,
+    target_height: f32,
+) -> Result<SkinnedGlbModel> {
+    let (mut mesh, skeleton, animations) = load_skinned_mesh_data(path)?;
+    normalize_skinned_mesh(&mut mesh.vertices, footprint_w, footprint_h, target_height);
+
+    let (width, height) = compute_skinned_bounds(&mesh.vertices);
+
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Skinned Model Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("model_skinned.wgsl").into()),
+    });
+
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Skinned Model Bind Group Layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Skinned Model Pipeline Layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Skinned Model Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<SkinnedModelVertex>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![
+                    0 => Float32x3,
+                    1 => Float32x3,
+                    2 => Float32x2,
+                    3 => Uint32x4,
+                    4 => Float32x4,
+                ],
+            }],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Skinned Model Vertex Buffer"),
+        contents: bytemuck::cast_slice(&mesh.vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Skinned Model Index Buffer"),
+        contents: bytemuck::cast_slice(&mesh.indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
+    let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Skinned Model Uniform Buffer"),
+        size: std::mem::size_of::<SkinnedUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let (texture, texture_view, sampler) = upload_texture(device, queue, &mesh.texture)?;
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Skinned Model Bind Group"),
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&texture_view),
+            },
+        ],
+    });
+
+    Ok(SkinnedGlbModel {
+        pipeline,
+        bind_group_layout,
+        vertex_buffer,
+        index_buffer,
+        index_count: mesh.indices.len() as u32,
+        uniform_buffer,
+        bind_group,
+        width,
+        height,
+        skeleton,
+        animations,
+        _texture: texture,
+        _sampler: sampler,
+    })
+}
+
+impl SkinnedGlbModel {
+    pub fn draw_one(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        queue: &wgpu::Queue,
+        view_proj: Mat4,
+        instance: &ModelDraw,
+        bones: &[Mat4],
+    ) {
+        if self.index_count == 0 {
+            return;
+        }
+        let mut bone_cols = [[[0.0f32; 4]; 4]; MAX_JOINTS];
+        for (i, bone) in bones.iter().take(MAX_JOINTS).enumerate() {
+            bone_cols[i] = bone.cols;
+        }
+        let uniforms = SkinnedUniforms {
+            view_proj: view_proj.cols,
+            model: instance.model.cols,
+            tint: instance.tint,
+            bones: bone_cols,
+        };
+        queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms),
+        );
+        render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.set_bind_group(0, &self.bind_group, &[]);
+        render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+    }
+}
+
+struct SkinnedMeshData {
+    vertices: Vec<SkinnedModelVertex>,
+    indices: Vec<u32>,
+    texture: image::DynamicImage,
+}
+
+fn load_skinned_mesh_data(path: &Path) -> Result<(SkinnedMeshData, Skeleton, AnimationSet)> {
+    let (document, buffers, images) = gltf::import(path).context("failed to import glb")?;
+    let (skeleton, animations) =
+        crate::animation::load_animation_from_document(&document, &buffers)?;
+
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut found = false;
+
+    for node in document.nodes() {
+        let Some(mesh) = node.mesh() else { continue };
+        for primitive in mesh.primitives() {
+            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+            let Some(joints_iter) = reader.read_joints(0) else {
+                continue;
+            };
+            let weights_iter = reader
+                .read_weights(0)
+                .context("skinned primitive missing weights")?;
+            let positions: Vec<[f32; 3]> = reader
+                .read_positions()
+                .context("skinned primitive missing positions")?
+                .collect();
+            let normals: Vec<[f32; 3]> = reader
+                .read_normals()
+                .map(|iter| iter.collect())
+                .unwrap_or_else(|| vec![[0.0, 1.0, 0.0]; positions.len()]);
+            let uvs: Vec<[f32; 2]> = reader
+                .read_tex_coords(0)
+                .map(|iter| iter.into_f32().collect())
+                .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
+            let joints: Vec<[u16; 4]> = joints_iter.into_u16().collect();
+            let weights: Vec<[f32; 4]> = weights_iter.into_f32().collect();
+
+            let base = vertices.len() as u32;
+            for i in 0..positions.len() {
+                let mut w = weights[i];
+                let sum = w[0] + w[1] + w[2] + w[3];
+                if sum > 1e-8 {
+                    w = [w[0] / sum, w[1] / sum, w[2] / sum, w[3] / sum];
+                }
+                vertices.push(SkinnedModelVertex {
+                    position: positions[i],
+                    normal: normals[i],
+                    uv: uvs[i],
+                    joints: [
+                        joints[i][0] as u32,
+                        joints[i][1] as u32,
+                        joints[i][2] as u32,
+                        joints[i][3] as u32,
+                    ],
+                    weights: w,
+                });
+            }
+
+            if let Some(iter) = reader.read_indices() {
+                for idx in iter.into_u32() {
+                    indices.push(base + idx);
+                }
+            } else {
+                for i in 0..positions.len() as u32 {
+                    indices.push(base + i);
+                }
+            }
+            found = true;
+            break;
+        }
+        if found {
+            break;
+        }
+    }
+
+    if !found || vertices.is_empty() {
+        anyhow::bail!("glb contains no skinned mesh geometry");
+    }
+
+    let texture = if let Some(image) = images.into_iter().next() {
+        gltf_image_to_dynamic(&image).unwrap_or_else(|err| {
+            tracing::warn!(%err, "failed to convert skinned model texture; using material color");
+            material_fallback_texture(&document)
+        })
+    } else {
+        material_fallback_texture(&document)
+    };
+
+    Ok((
+        SkinnedMeshData {
+            vertices,
+            indices,
+            texture,
+        },
+        skeleton,
+        animations,
+    ))
+}
+
+fn normalize_skinned_mesh(
+    vertices: &mut [SkinnedModelVertex],
+    footprint_w: f32,
+    footprint_h: f32,
+    target_height: f32,
+) {
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    for v in vertices.iter() {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(v.position[axis]);
+            max[axis] = max[axis].max(v.position[axis]);
+        }
+    }
+    let width_x = (max[0] - min[0]).max(0.01);
+    let height_y = (max[1] - min[1]).max(0.01);
+    let depth_z = (max[2] - min[2]).max(0.01);
+
+    for v in vertices.iter_mut() {
+        v.position[0] = (v.position[0] - min[0]) / width_x * footprint_w;
+        v.position[1] = (v.position[1] - min[1]) / height_y * target_height;
+        v.position[2] = (v.position[2] - min[2]) / depth_z * footprint_h;
+    }
+
+    let half_w = footprint_w * 0.5;
+    let half_h = footprint_h * 0.5;
+    for v in vertices.iter_mut() {
+        v.position[0] -= half_w;
+        v.position[2] -= half_h;
+    }
+}
+
+fn compute_skinned_bounds(vertices: &[SkinnedModelVertex]) -> (f32, f32) {
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    for v in vertices {
+        for axis in 0..3 {
+            min[axis] = min[axis].min(v.position[axis]);
+            max[axis] = max[axis].max(v.position[axis]);
+        }
+    }
+    let height = (max[1] - min[1]).max(0.01);
+    let width = (max[0] - min[0]).max(max[2] - min[2]).max(0.01);
+    (width, height)
 }
 
 pub fn load_glb_model(
