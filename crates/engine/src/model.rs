@@ -98,6 +98,8 @@ pub struct SkinnedGlbModel {
     pub skeleton: Skeleton,
     pub animations: AnimationSet,
     pub bind_pose_bones: Vec<Mat4>,
+    /// When set, horizontal root translation is stripped from sampled clips.
+    pub root_motion_node: Option<usize>,
     bind_vertices: Vec<SkinnedModelVertex>,
     scratch_vertices: Vec<ModelVertex>,
 }
@@ -128,7 +130,7 @@ impl NpcModel {
 }
 
 const DEFAULT_PLAYER_MODEL: &str = "Superhero_Male_FullBody.gltf";
-const DEFAULT_PLAYER_ANIMATIONS: &str = "UAL1_Standard_RM.glb";
+const DEFAULT_PLAYER_ANIMATIONS: &str = "UAL1_Standard.glb";
 const FALLBACK_PLAYER_MODEL: &str = "Pinguin_001.glb";
 pub const MUTANT_TIGER_MODEL: &str = "Tiger_001.glb";
 
@@ -241,6 +243,7 @@ fn attach_player_animations(model: &mut SkinnedGlbModel) {
                 return;
             }
             model.animations = clips;
+            model.root_motion_node = Some(crate::animation::PLAYER_ROOT_NODE);
             model.bind_pose_bones = model.skeleton.bind_pose();
             recompute_player_footprint(model);
             tracing::info!(
@@ -259,7 +262,7 @@ fn recompute_player_footprint(model: &mut SkinnedGlbModel) {
     let Some(idle) = model.animations.clips.get(crate::animation::PLAYER_IDLE) else {
         return;
     };
-    let idle_bones = model.skeleton.sample_clip(idle, 0.0);
+    let idle_bones = model.skeleton.sample_clip_in_place(idle, 0.0, crate::animation::PLAYER_ROOT_NODE);
     model.footprint_matrix = skinned_footprint_matrix_from_bones(
         &model.bind_vertices,
         &idle_bones,
@@ -487,6 +490,7 @@ pub fn load_skinned_glb_model(
         skeleton,
         animations,
         bind_pose_bones,
+        root_motion_node: None,
         bind_vertices,
         scratch_vertices: Vec::with_capacity(vertex_count),
     })
@@ -1506,7 +1510,7 @@ mod tests {
         let footprint_matrix =
             skinned_footprint_matrix(&mesh.vertices, 1.0, 1.0, TARGET_NPC_HEIGHT);
         let player = AnimationPlayer::new(FROG_IDLE);
-        let bones = player.bone_matrices(&skeleton, &animations);
+        let bones = player.bone_matrices(&skeleton, &animations, None);
 
         let mut min = [f32::MAX; 3];
         let mut max = [f32::MIN; 3];
@@ -1608,6 +1612,43 @@ mod tests {
         assert!((height - TARGET_NPC_HEIGHT).abs() < 0.05);
         let depth = mesh.vertices.iter().map(|v| v.position[2]).fold(0.0f32, f32::max);
         assert!((depth - 2.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn player_walk_stays_centered_on_tile() {
+        use crate::animation::{load_animation_clips, PLAYER_IDLE, PLAYER_WALK};
+
+        let mesh_path = resolve_player_model_path().expect("player model should resolve");
+        let anim_path =
+            resolve_model_path(DEFAULT_PLAYER_ANIMATIONS).expect("UAL1 animation library should resolve");
+        let (mesh, skeleton, _) = load_skinned_mesh_data(&mesh_path).expect("load superhero mesh");
+        let clips = load_animation_clips(&anim_path).expect("load clips");
+        let idle = &clips.clips[PLAYER_IDLE];
+        let walk = &clips.clips[PLAYER_WALK];
+        let idle_center =
+            skinned_mesh_center(&mesh.vertices, &skeleton.sample_clip_in_place(idle, 0.0, crate::animation::PLAYER_ROOT_NODE));
+        for t in [0.0, 0.25, 0.5, 0.75] {
+            let walk_center = skinned_mesh_center(
+                &mesh.vertices,
+                &skeleton.sample_clip_in_place(walk, t, crate::animation::PLAYER_ROOT_NODE),
+            );
+            let dx = (walk_center[0] - idle_center[0]).abs();
+            let dz = (walk_center[2] - idle_center[2]).abs();
+            eprintln!("walk t={t} offset dx={dx:.3} dz={dz:.3}");
+            assert!(
+                dx < 0.15 && dz < 0.15,
+                "walk root motion should not shift mesh center outside tile (dx={dx}, dz={dz})"
+            );
+        }
+    }
+
+    fn skinned_mesh_center(vertices: &[SkinnedModelVertex], bones: &[Mat4]) -> [f32; 3] {
+        let (min, max) = skinned_bounds_from_bones(vertices, bones);
+        [
+            (min[0] + max[0]) * 0.5,
+            (min[1] + max[1]) * 0.5,
+            (min[2] + max[2]) * 0.5,
+        ]
     }
 
     #[test]

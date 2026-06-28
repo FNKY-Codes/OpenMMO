@@ -785,8 +785,11 @@ impl Renderer {
                             });
                             update_player_clip(player, movement_interp, entity_id, now);
                             player.advance(dt, &model.animations);
-                            let bones =
-                                player.bone_matrices(&model.skeleton, &model.animations);
+                            let bones = player.bone_matrices(
+                                &model.skeleton,
+                                &model.animations,
+                                model.root_motion_node,
+                            );
                             model.draw_one(
                                 &mut render_pass,
                                 &self.gpu.queue,
@@ -819,7 +822,11 @@ impl Renderer {
                                 now,
                             );
                             player.advance(dt, &model.animations);
-                            let bones = player.bone_matrices(&model.skeleton, &model.animations);
+                            let bones = player.bone_matrices(
+                                &model.skeleton,
+                                &model.animations,
+                                model.root_motion_node,
+                            );
                             model.draw_one(
                                 &mut render_pass,
                                 &self.gpu.queue,
@@ -838,9 +845,11 @@ impl Renderer {
                 continue;
             };
             corpse.player.advance(dt, &model.animations);
-            let bones = corpse
-                .player
-                .bone_matrices(&model.skeleton, &model.animations);
+            let bones = corpse.player.bone_matrices(
+                &model.skeleton,
+                &model.animations,
+                model.root_motion_node,
+            );
             let draw = ModelDraw {
                 target: ModelTarget::Npc(corpse.npc_id),
                 model: entity_model_matrix(corpse.base, corpse.yaw),
