@@ -765,7 +765,7 @@ impl Renderer {
                     }
                 }
                 ModelTarget::Npc(npc_id) => {
-                    let Some(npc_model) = self.npc_models.get(&npc_id) else {
+                    let Some(npc_model) = self.npc_models.get_mut(&npc_id) else {
                         continue;
                     };
                     match npc_model {
@@ -801,7 +801,7 @@ impl Renderer {
         }
 
         for corpse in death_corpses.iter_mut() {
-            let Some(NpcModel::Skinned(model)) = self.npc_models.get(&corpse.npc_id) else {
+            let Some(NpcModel::Skinned(model)) = self.npc_models.get_mut(&corpse.npc_id) else {
                 continue;
             };
             corpse.player.advance(dt, &model.animations);
