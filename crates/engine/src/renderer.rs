@@ -962,9 +962,7 @@ impl Renderer {
                                 alive,
                                 fallback_color,
                                 opaque_entity_vertices,
-                                opaque_outline_vertices,
                                 transparent_entity_vertices,
-                                transparent_outline_vertices,
                                 transparent_draws,
                             );
                             return;
@@ -1126,17 +1124,15 @@ impl Renderer {
         alive: bool,
         dead_color: [f32; 4],
         opaque_entity_vertices: &mut Vec<Vertex>,
-        opaque_outline_vertices: &mut Vec<Vertex>,
         transparent_entity_vertices: &mut Vec<Vertex>,
-        transparent_outline_vertices: &mut Vec<Vertex>,
         transparent_draws: &mut Vec<TransparentDraw>,
     ) {
         let [cx, surface_y, cz] = base;
         let transparent = !alive;
-        let (entity_vertices, outline_vertices) = if transparent {
-            (transparent_entity_vertices, transparent_outline_vertices)
+        let entity_vertices = if transparent {
+            transparent_entity_vertices
         } else {
-            (opaque_entity_vertices, opaque_outline_vertices)
+            opaque_entity_vertices
         };
 
         let solid_start = entity_vertices.len() as u32;
@@ -1151,20 +1147,6 @@ impl Renderer {
         }
         let solid_len = entity_vertices.len() as u32 - solid_start;
 
-        let outline_start = outline_vertices.len() as u32;
-        for face in &mesh.faces {
-            let [a, b, c] = face.positions;
-            let world = |p: [f32; 3]| [cx + p[0], surface_y + p[1], cz + p[2]];
-            let wa = world(a);
-            let wb = world(b);
-            let wc = world(c);
-            let edge_color = [0.0, 0.0, 0.0, 1.0];
-            push_line(wa, wb, edge_color, outline_vertices);
-            push_line(wb, wc, edge_color, outline_vertices);
-            push_line(wc, wa, edge_color, outline_vertices);
-        }
-        let outline_len = outline_vertices.len() as u32 - outline_start;
-
         if transparent {
             let center_y = surface_y + mesh.height * 0.5;
             let dx = cx - eye.x;
@@ -1173,8 +1155,8 @@ impl Renderer {
             transparent_draws.push(TransparentDraw {
                 solid_start,
                 solid_len,
-                outline_start,
-                outline_len,
+                outline_start: 0,
+                outline_len: 0,
                 sort_key: dx * dx + dy * dy + dz * dz,
             });
         }
