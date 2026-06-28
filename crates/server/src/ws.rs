@@ -107,15 +107,24 @@ pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
                 let mut w = tick_state.world.write().await;
                 tick_messages = process_tick(&mut w);
                 full_snapshot_counter += 1;
-                let snapshot = if full_snapshot_counter % 50 == 0 {
-                    snapshot_message(&w, None)
-                } else {
-                    ServerMessage::StateDelta {
-                        tick: w.tick,
-                        entities: w.entities_snapshot(),
-                    }
+                let delta = ServerMessage::StateDelta {
+                    tick: w.tick,
+                    entities: w.entities_snapshot(),
                 };
-                tick_state.broadcast(&snapshot).await;
+                tick_state.broadcast(&delta).await;
+                if full_snapshot_counter % 50 == 0 {
+                    let player_ids: Vec<PlayerId> = tick_state
+                        .player_senders
+                        .read()
+                        .await
+                        .keys()
+                        .copied()
+                        .collect();
+                    for pid in player_ids {
+                        let snapshot = snapshot_message(&w, Some(pid));
+                        tick_state.send_to_player(pid, &snapshot).await;
+                    }
+                }
             }
             for (target, msg) in tick_messages {
                 match target {

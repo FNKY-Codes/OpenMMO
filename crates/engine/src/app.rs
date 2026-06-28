@@ -263,6 +263,9 @@ impl EngineApp {
                 tick,
                 ..
             } => {
+                if local_player.is_none() && self.local_player.is_some() {
+                    return;
+                }
                 self.current_region_id = region_id;
                 self.region = self.content.region(region_id).cloned();
                 self.entities = entities;

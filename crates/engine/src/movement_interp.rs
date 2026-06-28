@@ -62,6 +62,12 @@ impl EntityMovementInterp {
     ) {
         let fp = footprint.unwrap_or_default();
         let world = footprint_world_center(pos, region, fp);
+        let facing_yaw = self
+            .entries
+            .get(&id)
+            .filter(|e| e.to_tile == pos)
+            .map(|e| e.facing_yaw)
+            .unwrap_or(0.0);
         self.entries.insert(
             id,
             Entry {
@@ -70,7 +76,7 @@ impl EntityMovementInterp {
                 from_tile: pos,
                 to_tile: pos,
                 segment_start: Instant::now(),
-                facing_yaw: 0.0,
+                facing_yaw,
             },
         );
     }
@@ -256,6 +262,20 @@ mod tests {
 
         let yaw = interp.visual_facing_yaw(id, start).unwrap();
         assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 0.01);
+    }
+
+    #[test]
+    fn seed_position_preserves_facing_at_same_tile() {
+        let mut interp = EntityMovementInterp::default();
+        let id = EntityId(1);
+        let start = now();
+        interp.on_position_change(id, TilePos::new(0, 0), start, None, None);
+        interp.face_toward(id, TilePos::new(0, 0), TilePos::new(1, 0));
+
+        let before = interp.visual_facing_yaw(id, start).unwrap();
+        interp.seed_position(id, TilePos::new(0, 0), None, None);
+        let after = interp.visual_facing_yaw(id, start).unwrap();
+        assert!((after - before).abs() < 0.01);
     }
 
     #[test]
