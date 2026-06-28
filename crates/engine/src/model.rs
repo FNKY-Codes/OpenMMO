@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 
-use crate::animation::{AnimationSet, Skeleton, MAX_JOINTS};
+use crate::animation::{AnimationSet, Skeleton};
 use crate::entity_bounds;
 use crate::math::{Mat4, Vec3};
 
@@ -75,20 +75,6 @@ pub struct SkinnedModelVertex {
     pub weights: [f32; 4],
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct SkinnedSceneUniforms {
-    pub view_proj: [[f32; 4]; 4],
-    pub model: [[f32; 4]; 4],
-    pub tint: [f32; 4],
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct SkinnedBoneUniforms {
-    pub bones: [[[f32; 4]; 4]; MAX_JOINTS],
-}
-
 pub struct SkinnedGlbModel {
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
@@ -96,7 +82,6 @@ pub struct SkinnedGlbModel {
     pub index_buffer: wgpu::Buffer,
     pub index_count: u32,
     pub uniform_buffer: wgpu::Buffer,
-    pub bone_uniform_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
     pub width: f32,
     pub height: f32,
@@ -104,6 +89,8 @@ pub struct SkinnedGlbModel {
     pub footprint_matrix: Mat4,
     pub skeleton: Skeleton,
     pub animations: AnimationSet,
+    bind_vertices: Vec<SkinnedModelVertex>,
+    scratch_vertices: Vec<ModelVertex>,
     _texture: wgpu::Texture,
     _sampler: wgpu::Sampler,
 }
@@ -276,13 +263,17 @@ pub fn load_skinned_glb_model(
         skinned_footprint_matrix(&mesh.vertices, footprint_w, footprint_h, target_height);
     let (width, height) = skinned_footprint_dims(&mesh.vertices, footprint_matrix);
 
+    let bind_vertices = mesh.vertices;
+    let vertex_count = bind_vertices.len();
+    let vertex_bytes = vertex_count * std::mem::size_of::<ModelVertex>();
+
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Skinned Model Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("model_skinned.wgsl").into()),
+        label: Some("Animated NPC Model Shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("model_shader.wgsl").into()),
     });
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Skinned Model Bind Group Layout"),
+        label: Some("Animated NPC Model Bind Group Layout"),
         entries: &[
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -296,22 +287,12 @@ pub fn load_skinned_glb_model(
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 3,
+                binding: 2,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -324,26 +305,24 @@ pub fn load_skinned_glb_model(
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Skinned Model Pipeline Layout"),
+        label: Some("Animated NPC Model Pipeline Layout"),
         bind_group_layouts: &[&bind_group_layout],
         push_constant_ranges: &[],
     });
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Skinned Model Pipeline"),
+        label: Some("Animated NPC Model Pipeline"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: Some("vs_main"),
             buffers: &[wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<SkinnedModelVertex>() as wgpu::BufferAddress,
+                array_stride: std::mem::size_of::<ModelVertex>() as wgpu::BufferAddress,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: &wgpu::vertex_attr_array![
                     0 => Float32x3,
                     1 => Float32x3,
                     2 => Float32x2,
-                    3 => Uint32x4,
-                    4 => Float32x4,
                 ],
             }],
             compilation_options: Default::default(),
@@ -379,10 +358,11 @@ pub fn load_skinned_glb_model(
         cache: None,
     });
 
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Skinned Model Vertex Buffer"),
-        contents: bytemuck::cast_slice(&mesh.vertices),
-        usage: wgpu::BufferUsages::VERTEX,
+    let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Animated NPC Model Vertex Buffer"),
+        size: vertex_bytes.max(1) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
 
     let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -392,15 +372,8 @@ pub fn load_skinned_glb_model(
     });
 
     let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Skinned Model Scene Uniform Buffer"),
-        size: std::mem::size_of::<SkinnedSceneUniforms>() as u64,
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    let bone_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Skinned Model Bone Uniform Buffer"),
-        size: std::mem::size_of::<SkinnedBoneUniforms>() as u64,
+        label: Some("Animated NPC Model Uniform Buffer"),
+        size: std::mem::size_of::<ModelUniforms>() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -408,7 +381,7 @@ pub fn load_skinned_glb_model(
     let (texture, texture_view, sampler) = upload_texture(device, queue, &mesh.texture)?;
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Skinned Model Bind Group"),
+        label: Some("Animated NPC Model Bind Group"),
         layout: &bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
@@ -417,14 +390,10 @@ pub fn load_skinned_glb_model(
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: bone_uniform_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
                 resource: wgpu::BindingResource::Sampler(&sampler),
             },
             wgpu::BindGroupEntry {
-                binding: 3,
+                binding: 2,
                 resource: wgpu::BindingResource::TextureView(&texture_view),
             },
         ],
@@ -437,13 +406,14 @@ pub fn load_skinned_glb_model(
         index_buffer,
         index_count: mesh.indices.len() as u32,
         uniform_buffer,
-        bone_uniform_buffer,
         bind_group,
         width,
         height,
         footprint_matrix,
         skeleton,
         animations,
+        bind_vertices,
+        scratch_vertices: Vec::with_capacity(vertex_count),
         _texture: texture,
         _sampler: sampler,
     })
@@ -451,7 +421,7 @@ pub fn load_skinned_glb_model(
 
 impl SkinnedGlbModel {
     pub fn draw_one(
-        &self,
+        &mut self,
         render_pass: &mut wgpu::RenderPass<'_>,
         queue: &wgpu::Queue,
         view_proj: Mat4,
@@ -461,29 +431,31 @@ impl SkinnedGlbModel {
         if self.index_count == 0 {
             return;
         }
-        let mut bone_cols = [[[0.0f32; 4]; 4]; MAX_JOINTS];
-        for i in 0..MAX_JOINTS {
-            bone_cols[i] = Mat4::identity().cols;
+        self.scratch_vertices.clear();
+        self.scratch_vertices.reserve(self.bind_vertices.len());
+        for v in &self.bind_vertices {
+            self.scratch_vertices.push(ModelVertex {
+                position: skin_vertex_position(bones, v.joints, v.weights, v.position),
+                normal: skin_vertex_normal(bones, v.joints, v.weights, v.normal),
+                uv: v.uv,
+            });
         }
-        for (i, bone) in bones.iter().take(MAX_JOINTS).enumerate() {
-            bone_cols[i] = bone.cols;
-        }
+        queue.write_buffer(
+            &self.vertex_buffer,
+            0,
+            bytemuck::cast_slice(&self.scratch_vertices),
+        );
         let model = instance.model.mul(self.footprint_matrix);
-        let scene_uniforms = SkinnedSceneUniforms {
+        let uniforms = ModelUniforms {
             view_proj: view_proj.cols,
             model: model.cols,
             tint: instance.tint,
+            _padding: [0.0; 4],
         };
-        let bone_uniforms = SkinnedBoneUniforms { bones: bone_cols };
         queue.write_buffer(
             &self.uniform_buffer,
             0,
-            bytemuck::bytes_of(&scene_uniforms),
-        );
-        queue.write_buffer(
-            &self.bone_uniform_buffer,
-            0,
-            bytemuck::bytes_of(&bone_uniforms),
+            bytemuck::bytes_of(&uniforms),
         );
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
@@ -650,8 +622,7 @@ fn skinned_footprint_dims(vertices: &[SkinnedModelVertex], matrix: Mat4) -> (f32
     (width, height)
 }
 
-#[cfg(test)]
-fn skin_vertex_vector(bones: &[Mat4], joints: [u32; 4], weights: [f32; 4], position: [f32; 3]) -> [f32; 3] {
+fn skin_vertex_position(bones: &[Mat4], joints: [u32; 4], weights: [f32; 4], position: [f32; 3]) -> [f32; 3] {
     let mut out = [0.0f32; 3];
     for i in 0..4 {
         let bone = bones
@@ -666,6 +637,26 @@ fn skin_vertex_vector(bones: &[Mat4], joints: [u32; 4], weights: [f32; 4], posit
         out[2] += p.z * scale;
     }
     out
+}
+
+fn skin_vertex_normal(bones: &[Mat4], joints: [u32; 4], weights: [f32; 4], normal: [f32; 3]) -> [f32; 3] {
+    let mut out = [0.0f32; 3];
+    for i in 0..4 {
+        let bone = bones
+            .get(joints[i] as usize)
+            .copied()
+            .unwrap_or(Mat4::identity());
+        let n = transform_direction(bone, normal);
+        out[0] += n[0] * weights[i];
+        out[1] += n[1] * weights[i];
+        out[2] += n[2] * weights[i];
+    }
+    let len = (out[0] * out[0] + out[1] * out[1] + out[2] * out[2]).sqrt();
+    if len < 1e-8 {
+        [0.0, 1.0, 0.0]
+    } else {
+        [out[0] / len, out[1] / len, out[2] / len]
+    }
 }
 
 #[cfg(test)]
@@ -1256,7 +1247,7 @@ mod tests {
 
         let mut max_dist = 0.0f32;
         for v in &mesh.vertices {
-            let skinned = skin_vertex_vector(&bones, v.joints, v.weights, v.position);
+            let skinned = skin_vertex_position(&bones, v.joints, v.weights, v.position);
             let (p, w) = footprint_matrix.transform_point(Vec3::new(
                 skinned[0], skinned[1], skinned[2],
             ));
@@ -1278,7 +1269,7 @@ mod tests {
         let bones = skeleton.bind_pose();
         let mut max_err = 0.0f32;
         for v in &mesh.vertices {
-            let skinned = skin_vertex_linear(bones.as_slice(), v.joints, v.weights, v.position);
+            let skinned = skin_vertex_position(bones.as_slice(), v.joints, v.weights, v.position);
             for axis in 0..3 {
                 max_err = max_err.max((skinned[axis] - v.position[axis]).abs());
             }
