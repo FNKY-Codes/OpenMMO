@@ -1615,6 +1615,58 @@ mod tests {
     }
 
     #[test]
+    fn player_in_place_preserves_orientation_at_t0() {
+        use crate::animation::{load_animation_set, PLAYER_IDLE};
+
+        let anim_path = resolve_model_path(DEFAULT_PLAYER_ANIMATIONS).expect("UAL1");
+        let (mesh, skeleton, _) = load_skinned_mesh_data(&anim_path).expect("ual mesh");
+        let (_, clips) = load_animation_set(&anim_path).expect("clips");
+        let idle = &clips.clips[PLAYER_IDLE];
+
+        let normal = skeleton.sample_clip(idle, 0.0);
+        let in_place = skeleton.sample_clip_in_place(idle, 0.0, crate::animation::PLAYER_ROOT_NODE);
+        let (nmin, nmax) = skinned_bounds_from_bones(&mesh.vertices, &normal);
+        let (imin, imax) = skinned_bounds_from_bones(&mesh.vertices, &in_place);
+        eprintln!("sample_clip: y {:.3}..{:.3}", nmin[1], nmax[1]);
+        eprintln!("in_place t=0: y {:.3}..{:.3}", imin[1], imax[1]);
+        assert!(nmin[1] >= -0.1 && nmax[1] > 1.0, "normal clip upright");
+        assert!(imin[1] >= -0.1 && imax[1] > 1.0, "in_place at t=0 should match");
+    }
+
+    #[test]
+    fn player_animated_pose_is_upright() {
+        use crate::animation::{load_animation_clips, PLAYER_IDLE, PLAYER_WALK};
+
+        let mesh_path = resolve_player_model_path().expect("player model should resolve");
+        let anim_path =
+            resolve_model_path(DEFAULT_PLAYER_ANIMATIONS).expect("UAL1 animation library should resolve");
+        let (mesh, skeleton, _) = load_skinned_mesh_data(&mesh_path).expect("load superhero mesh");
+        let clips = load_animation_clips(&anim_path).expect("load clips");
+
+        // Head node 0, foot balls ~ node names ball_l/ball_r - use skinned vertex extremes
+        for (label, clip_name, t) in [
+            ("bind", "", -1.0),
+            ("idle", PLAYER_IDLE, 0.0),
+            ("walk", PLAYER_WALK, 0.5),
+        ] {
+            let bones = if label == "bind" {
+                skeleton.bind_pose()
+            } else {
+                let clip = &clips.clips[clip_name];
+                skeleton.sample_clip_in_place(clip, t, crate::animation::PLAYER_ROOT_NODE)
+            };
+            let (min, max) = skinned_bounds_from_bones(&mesh.vertices, &bones);
+            eprintln!("{label}: y min={:.3} max={:.3} height={:.3}", min[1], max[1], max[1]-min[1]);
+            assert!(
+                min[1] >= -0.1 && max[1] > 1.0,
+                "{label} pose should be upright with feet near y=0 (min_y={:.3} max_y={:.3})",
+                min[1],
+                max[1]
+            );
+        }
+    }
+
+    #[test]
     fn player_walk_stays_centered_on_tile() {
         use crate::animation::{load_animation_clips, PLAYER_IDLE, PLAYER_WALK};
 

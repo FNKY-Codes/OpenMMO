@@ -333,11 +333,10 @@ impl Skeleton {
         let mut locals = self.sample_locals(clip, time);
         let locals_at_start = self.sample_locals(clip, 0.0);
         if root_node < locals.len() && root_node < locals_at_start.len() {
-            let (t0, _, _) = mat4_trs(locals_at_start[root_node]);
-            let (mut t, r, s) = mat4_trs(locals[root_node]);
-            t[0] = t0[0];
-            t[2] = t0[2];
-            locals[root_node] = mat4_from_trs(t, r, s);
+            // Edit translation directly; TRS decompose/recompose can flip orientations
+            // on the UAL root joint (-90° X) even when only X/Z should change.
+            locals[root_node].cols[3][0] = locals_at_start[root_node].cols[3][0];
+            locals[root_node].cols[3][2] = locals_at_start[root_node].cols[3][2];
         }
         let globals = self.global_transforms(&locals);
         self.skin_matrices(&globals)
@@ -668,6 +667,28 @@ mod tests {
     fn frog_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/models/Frog.glb")
+    }
+
+    #[test]
+    fn in_place_root_strip_preserves_matrix_at_t0() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/models/UAL1_Standard.glb");
+        let (skel, clips) = load_animation_set(&path).expect("load UAL");
+        let idle = &clips.clips[PLAYER_IDLE];
+        let at_zero = skel.sample_clip(idle, 0.0);
+        let in_place = skel.sample_clip_in_place(idle, 0.0, PLAYER_ROOT_NODE);
+        let mut max_diff = 0.0f32;
+        for (a, b) in at_zero.iter().zip(in_place.iter()) {
+            for c in 0..4 {
+                for r in 0..4 {
+                    max_diff = max_diff.max((a.cols[c][r] - b.cols[c][r]).abs());
+                }
+            }
+        }
+        assert!(
+            max_diff < 1e-4,
+            "in-place strip at t=0 should not alter bone matrices (max diff {max_diff})"
+        );
     }
 
     #[test]
