@@ -37,10 +37,10 @@ impl Camera {
         self.target_y = 0.9;
     }
 
-    pub fn center_on_world(&mut self, x: f32, z: f32) {
+    pub fn center_on_world(&mut self, x: f32, y: f32, z: f32) {
         self.target_x = x;
+        self.target_y = y;
         self.target_z = z;
-        self.target_y = 0.9;
     }
 
     /// Smoothly follow a world position (reduces camera jitter during movement).
