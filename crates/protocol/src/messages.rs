@@ -197,6 +197,10 @@ pub enum ServerMessage {
         amount: u32,
         style: openmmo_common::CombatStyle,
     },
+    AttackSwing {
+        source: EntityId,
+        target: EntityId,
+    },
     Death {
         entity: EntityId,
         killer: Option<EntityId>,

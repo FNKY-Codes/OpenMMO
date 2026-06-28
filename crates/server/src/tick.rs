@@ -1,4 +1,4 @@
-use openmmo_common::{ContentPack, EntityId, EquipSlot, HarvestTag, ItemId, BossState, NpcState, PlayerAction, PlayerId, RegionId, Skill, TilePos, ToolTag};
+use openmmo_common::{ContentPack, EntityId, EquipSlot, HarvestTag, ItemId, BossState, NpcState, PlayerAction, PlayerId, PlayerState, RegionId, Skill, TilePos, ToolTag};
 use openmmo_protocol::{ChatChannel, ClientMessage, LedgerContract, ServerMessage};
 use rand::Rng;
 
@@ -504,6 +504,83 @@ fn entity_position(world: &GameWorld, entity_id: EntityId) -> Option<TilePos> {
     entity_positions(world).get(&entity_id).copied()
 }
 
+fn player_combat_opponent(player: &PlayerState) -> Option<EntityId> {
+    if let PlayerAction::Combat { target, .. } = &player.action {
+        return Some(*target);
+    }
+    if let PlayerAction::Walking {
+        attack_target: Some(target),
+        ..
+    } = &player.action
+    {
+        return Some(*target);
+    }
+    player.combat_target
+}
+
+fn player_engaged_with_other(player: &PlayerState, entity_id: EntityId) -> bool {
+    player_combat_opponent(player).is_some_and(|t| t != entity_id)
+}
+
+fn clear_other_npc_aggro(world: &mut GameWorld, player_id: PlayerId, combat_npc: EntityId) {
+    for npc in world.npcs.values_mut() {
+        if npc.aggro_target == Some(player_id) && npc.entity_id != combat_npc {
+            npc.aggro_target = None;
+        }
+    }
+}
+
+fn push_attack_swing(
+    messages: &mut Vec<(MessageTarget, ServerMessage)>,
+    viewer: PlayerId,
+    source: EntityId,
+    target: EntityId,
+) {
+    messages.push((
+        MessageTarget::Player(viewer),
+        ServerMessage::AttackSwing { source, target },
+    ));
+}
+
+fn engage_player_with_npc(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    npc_entity: EntityId,
+    fp: &NpcFootprint,
+    npc_pos: TilePos,
+) {
+    let Some(player) = world.players.get_mut(&player_id) else {
+        return;
+    };
+    if player_combat_opponent(player).is_none() {
+        player.combat_target = Some(npc_entity);
+    }
+    if !fp.player_adjacent(player.position, npc_pos) {
+        return;
+    }
+    if !matches!(
+        player.action,
+        PlayerAction::Combat {
+            target,
+            ..
+        } if target == npc_entity
+    ) {
+        player.action = PlayerAction::Combat {
+            target: npc_entity,
+            style: openmmo_common::CombatStyle::Melee,
+            player_attack_cooldown: 0,
+        };
+    }
+}
+
+fn combat_target_alive(world: &GameWorld, target: EntityId, boss_target: bool) -> bool {
+    if boss_target {
+        world.boss.as_ref().is_some_and(|b| b.hp > 0)
+    } else {
+        world.npcs.get(&target).is_some_and(|n| n.alive)
+    }
+}
+
 fn object_positions(world: &GameWorld) -> std::collections::HashMap<EntityId, TilePos> {
     world
         .objects
@@ -912,10 +989,6 @@ fn handle_attack(
     }
 
     let walkable = world.walkable_for_player(player_id);
-    let content = &world.content;
-    let npcs = &world.npcs;
-    let boss = &world.boss;
-
     {
         let player = match world.players.get_mut(&player_id) {
             Some(p) => p,
@@ -923,6 +996,11 @@ fn handle_attack(
         };
         player.combat_target = Some(target);
     }
+    clear_other_npc_aggro(world, player_id, target);
+
+    let content = &world.content;
+    let npcs = &world.npcs;
+    let boss = &world.boss;
 
     let player_pos = world.players.get(&player_id).expect("player").position;
     let player_region = world.players.get(&player_id).expect("player").region_id;
@@ -1392,12 +1470,18 @@ fn tick_player_combat(
     };
 
     if !in_range {
+        let target_alive = combat_target_alive(world, target, boss_target);
         if let Some(player) = world.players.get_mut(&pid) {
-            player.action = PlayerAction::Combat {
-                target,
-                style,
-                player_attack_cooldown,
-            };
+            if target_alive {
+                player.action = PlayerAction::Combat {
+                    target,
+                    style,
+                    player_attack_cooldown,
+                };
+            } else {
+                player.action = PlayerAction::Idle;
+                player.combat_target = None;
+            }
         }
         return;
     }
@@ -1421,6 +1505,9 @@ fn tick_player_combat(
     let player_eid = world.players.get(&pid).map(|p| p.entity_id);
 
     if player_attack_cooldown == 0 {
+        if let Some(eid) = player_eid {
+            push_attack_swing(messages, pid, eid, target);
+        }
         if boss_target {
             if let (Some(player), Some(boss)) =
                 (world.players.get_mut(&pid), world.boss.as_mut())
@@ -1495,6 +1582,9 @@ fn tick_player_combat(
     if boss_target {
         if let Some(boss) = world.boss.as_ref() {
             if boss.attack_cooldown == 0 {
+                if let Some(player) = world.players.get(&pid) {
+                    push_attack_swing(messages, pid, target, player.entity_id);
+                }
                 if let Some(player) = world.players.get_mut(&pid) {
                     let player_eid = player.entity_id;
                     if let Some(hit) = boss_attack_player(boss, player, content) {
@@ -1521,6 +1611,9 @@ fn tick_player_combat(
     } else if let Some(npc) = world.npcs.get(&target) {
         if npc.alive && npc.attack_cooldown == 0 {
             let npc_id = npc.npc_id;
+            if let Some(player) = world.players.get(&pid) {
+                push_attack_swing(messages, pid, target, player.entity_id);
+            }
             if let Some(player) = world.players.get_mut(&pid) {
                 let player_eid = player.entity_id;
                 if let Some(hit) = npc_attack_player(npc, player, content) {
@@ -1545,12 +1638,18 @@ fn tick_player_combat(
         }
     }
 
+    let target_alive = combat_target_alive(world, target, boss_target);
     if let Some(player) = world.players.get_mut(&pid) {
-        player.action = PlayerAction::Combat {
-            target,
-            style,
-            player_attack_cooldown,
-        };
+        if target_alive {
+            player.action = PlayerAction::Combat {
+                target,
+                style,
+                player_attack_cooldown,
+            };
+        } else {
+            player.action = PlayerAction::Idle;
+            player.combat_target = None;
+        }
     }
 }
 
@@ -1600,6 +1699,7 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                 if let (Some(player), Some(npc)) =
                     (world.players.get_mut(&pid), world.npcs.get_mut(&target))
                 {
+                    push_attack_swing(messages, pid, player_eid, target);
                     let npc_dead =
                         if let Some(hit) =
                             use_gadget(player, npc, spell.max_hit, spell.xp, &content)
@@ -2153,6 +2253,9 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                 if player.region_id != npc_region_id {
                     continue;
                 }
+                if player_engaged_with_other(player, entity_id) {
+                    continue;
+                }
                 if fp.los_distance(player.position, npc_pos) <= def.aggro_range {
                     target_player = Some(*pid);
                     break;
@@ -2160,9 +2263,20 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
             }
         }
         if let Some(target_pid) = target_player {
+            if world
+                .players
+                .get(&target_pid)
+                .is_some_and(|p| player_engaged_with_other(p, entity_id))
+            {
+                if let Some(npc) = world.npcs.get_mut(&entity_id) {
+                    npc.aggro_target = None;
+                }
+                continue;
+            }
             if let Some(npc) = world.npcs.get_mut(&entity_id) {
                 npc.aggro_target = Some(target_pid);
             }
+            engage_player_with_npc(world, target_pid, entity_id, &fp, npc_pos);
             let player_pos = world
                 .players
                 .get(&target_pid)
@@ -2191,6 +2305,7 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                         let content = world.content.clone();
                         let player_eid = player.entity_id;
                         let npc_id = npc.npc_id;
+                        push_attack_swing(messages, target_pid, entity_id, player_eid);
                         if let Some(hit) = crate::combat::npc_attack_player(npc, player, &content) {
                             messages.push((
                                 MessageTarget::Player(target_pid),
@@ -2706,5 +2821,64 @@ mod routing_tests {
 
         assert!(!transitioned);
         assert_eq!(world.players.get(&pid).unwrap().region_id, RegionId(2));
+    }
+
+    #[test]
+    fn only_one_npc_fights_player_at_a_time() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+        let content = openmmo_common::load_content(&path).expect("content dir");
+        let mut world = GameWorld::new(content);
+
+        let hostile_npcs: Vec<(EntityId, TilePos)> = world
+            .npcs
+            .iter()
+            .filter_map(|(eid, n)| {
+                world
+                    .content
+                    .npc(n.npc_id)
+                    .filter(|d| d.aggro_range > 0)
+                    .map(|_| (*eid, n.position))
+            })
+            .take(2)
+            .collect();
+        assert_eq!(
+            hostile_npcs.len(),
+            2,
+            "need at least two hostile npcs for this test"
+        );
+
+        let pid = PlayerId(Uuid::from_u128(1));
+        let mut player = test_player(1);
+        let mid_x = (hostile_npcs[0].1.x + hostile_npcs[1].1.x) / 2;
+        let mid_y = (hostile_npcs[0].1.y + hostile_npcs[1].1.y) / 2;
+        player.position = TilePos::new(mid_x, mid_y);
+        player.last_position = player.position;
+        player.region_id = world.npcs.get(&hostile_npcs[0].0).unwrap().region_id;
+        world.players.insert(pid, player);
+
+        for _ in 0..10 {
+            process_tick(&mut world);
+        }
+
+        let aggro_count = world
+            .npcs
+            .values()
+            .filter(|n| n.aggro_target == Some(pid))
+            .count();
+        assert!(
+            aggro_count <= 1,
+            "at most one npc should aggro the player at a time, got {aggro_count}"
+        );
+
+        let combat_partner = player_combat_opponent(world.players.get(&pid).unwrap());
+        if let Some(partner) = combat_partner {
+            let other_aggro = world.npcs.values().any(|n| {
+                n.aggro_target == Some(pid) && n.entity_id != partner
+            });
+            assert!(
+                !other_aggro,
+                "npcs other than the combat partner should not aggro the player"
+            );
+        }
     }
 }
