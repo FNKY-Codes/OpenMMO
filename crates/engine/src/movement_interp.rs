@@ -167,6 +167,14 @@ impl EntityMovementInterp {
             entry.from_tile != entry.to_tile && progress(entry.segment_start, now) < 1.0
         })
     }
+
+    pub fn movement_progress(&self, id: EntityId, now: Instant) -> Option<f32> {
+        let entry = self.entries.get(&id)?;
+        if entry.from_tile == entry.to_tile {
+            return None;
+        }
+        Some(progress(entry.segment_start, now))
+    }
 }
 
 fn footprint_world_center(
@@ -271,21 +279,36 @@ mod tests {
     }
 
     #[test]
-    fn consecutive_server_ticks_interpolate_from_receipt() {
+    fn simulated_walk_monotonic_in_move_direction() {
         let mut interp = EntityMovementInterp::default();
         let id = EntityId(1);
-        let t0 = now();
-        interp.on_position_change(id, TilePos::new(0, 0), t0, None, None);
+        let mut t = now();
+        interp.on_position_change(id, TilePos::new(0, 0), t, None, None);
 
-        let t1 = t0 + Duration::from_millis(TICK_MS);
-        interp.on_position_change(id, TilePos::new(1, 0), t1, None, None);
+        let mut positions = Vec::new();
+        for frame in 0..120 {
+            if frame > 0 && frame % 38 == 0 {
+                let tile_x = (frame / 38) as i32;
+                interp.on_position_change(
+                    id,
+                    TilePos::new(tile_x, 0),
+                    t,
+                    None,
+                    None,
+                );
+            }
+            let center = interp.visual_center(id, t, None, None).unwrap();
+            positions.push(center[0]);
+            t += Duration::from_millis(16);
+        }
 
-        assert!(interp.is_moving(id, t1));
-        let center = interp.visual_center(id, t1, None, None).unwrap();
-        assert!(
-            (center[0] - 0.5).abs() < 0.01,
-            "expected start of tile step, got x={}",
-            center[0]
-        );
+        for window in positions.windows(2) {
+            assert!(
+                window[1] + 0.001 >= window[0],
+                "visual x regressed from {} to {}",
+                window[0],
+                window[1]
+            );
+        }
     }
 }

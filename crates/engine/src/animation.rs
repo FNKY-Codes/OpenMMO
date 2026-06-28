@@ -207,6 +207,10 @@ impl AnimationPlayer {
         self.current.as_deref() == Some(name) && !self.finished
     }
 
+    pub fn set_time(&mut self, time: f32) {
+        self.time = time.max(0.0);
+    }
+
     pub fn advance(&mut self, dt: f32, clips: &AnimationSet) {
         let Some(current) = self.current.clone() else {
             self.play(self.idle_clip.clone(), true);

@@ -6,7 +6,8 @@ use egui_wgpu::wgpu;
 use openmmo_common::{ContentPack, EntityId, NpcFootprint, NpcId, RegionDef, TilePos, WorldEntity};
 
 use crate::animation::{
-    AnimationPlayer, DeathCorpse, FROG_ATTACK, FROG_IDLE, FROG_JUMP, PLAYER_IDLE, PLAYER_WALK,
+    AnimationPlayer, AnimationSet, DeathCorpse, FROG_ATTACK, FROG_IDLE, FROG_JUMP, PLAYER_IDLE,
+    PLAYER_WALK,
 };
 use crate::camera::Camera;
 use crate::entity_bounds;
@@ -575,6 +576,7 @@ impl Renderer {
         hover: Option<HoverTarget>,
         npc_animations: &mut HashMap<EntityId, AnimationPlayer>,
         death_corpses: &mut [DeathCorpse],
+        now: Instant,
         dt: f32,
     ) {
         let vp = self
@@ -621,7 +623,6 @@ impl Renderer {
         transparent_draws.clear();
         model_draws.clear();
 
-        let now = Instant::now();
         let mut local_entity = None;
         for entity in entities {
             let is_local = matches!(
@@ -783,8 +784,14 @@ impl Renderer {
                                 player.play(PLAYER_IDLE, true);
                                 player
                             });
-                            update_player_clip(player, movement_interp, entity_id, now);
-                            player.advance(dt, &model.animations);
+                            update_player_clip(
+                                player,
+                                movement_interp,
+                                entity_id,
+                                now,
+                                &model.animations,
+                                dt,
+                            );
                             let bones = player.bone_matrices(
                                 &model.skeleton,
                                 &model.animations,
@@ -1431,13 +1438,25 @@ fn update_player_clip(
     movement_interp: &EntityMovementInterp,
     entity_id: EntityId,
     now: Instant,
+    clips: &AnimationSet,
+    dt: f32,
 ) {
     if movement_interp.is_moving(entity_id, now) {
         if !player.is_playing(PLAYER_WALK) {
             player.play(PLAYER_WALK, true);
         }
-    } else if player.current_clip() != Some(PLAYER_IDLE) {
-        player.play(PLAYER_IDLE, true);
+        if let Some(t) = movement_interp.movement_progress(entity_id, now) {
+            if let Some(clip) = clips.clips.get(PLAYER_WALK) {
+                if clip.duration > 0.0 {
+                    player.set_time(t * clip.duration);
+                }
+            }
+        }
+    } else {
+        if player.current_clip() != Some(PLAYER_IDLE) {
+            player.play(PLAYER_IDLE, true);
+        }
+        player.advance(dt, clips);
     }
 }
 

@@ -726,17 +726,16 @@ impl EngineApp {
                     self.region.as_ref(),
                     None,
                 ) {
-                    renderer.camera_mut().follow_world(cx, cy, cz, dt);
+                    renderer.camera_mut().center_on_world(cx, cy, cz);
                 } else if let Some(position) = entity_bounds::entity_tile(entity) {
                     let surface_y =
                         entity_bounds::tile_surface_height(position, self.region.as_ref());
                     renderer
                         .camera_mut()
-                        .follow_world(
+                        .center_on_world(
                             position.x as f32 + 0.5,
                             surface_y,
                             position.y as f32 + 0.5,
-                            dt,
                         );
                 }
             }
@@ -765,6 +764,7 @@ impl EngineApp {
             hover,
             &mut self.npc_animations,
             &mut self.death_corpses,
+            now,
             dt,
         );
 
