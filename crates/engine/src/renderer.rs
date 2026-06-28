@@ -71,6 +71,8 @@ pub struct Renderer {
     camera: Camera,
     tile_cache_key: Option<TileCacheKey>,
     tile_vertex_count: u32,
+    cached_tile_vertices: Vec<Vertex>,
+    tiles_need_upload: bool,
     scratch_opaque_entity_vertices: Vec<Vertex>,
     scratch_opaque_outline_vertices: Vec<Vertex>,
     scratch_transparent_entity_vertices: Vec<Vertex>,
@@ -388,6 +390,8 @@ impl Renderer {
             camera: Camera::new(),
             tile_cache_key: None,
             tile_vertex_count: 0,
+            cached_tile_vertices: Vec::with_capacity(8192),
+            tiles_need_upload: false,
             scratch_opaque_entity_vertices: Vec::with_capacity(4096),
             scratch_opaque_outline_vertices: Vec::with_capacity(2048),
             scratch_transparent_entity_vertices: Vec::with_capacity(512),
@@ -456,6 +460,37 @@ impl Renderer {
     pub fn invalidate_tile_cache(&mut self) {
         self.tile_cache_key = None;
         self.tile_vertex_count = 0;
+        self.cached_tile_vertices.clear();
+        self.tiles_need_upload = false;
+    }
+
+    fn ensure_vertex_buffer_capacity(&mut self, required_vertices: usize) -> bool {
+        let vertex_size = std::mem::size_of::<Vertex>();
+        let current_capacity = self.vertex_buffer.size() as usize / vertex_size;
+        if required_vertices <= current_capacity {
+            return false;
+        }
+        let new_capacity = required_vertices.next_power_of_two().max(60_000);
+        self.vertex_buffer = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Vertex Buffer"),
+            size: (vertex_size * new_capacity) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.tiles_need_upload = true;
+        true
+    }
+
+    fn upload_tile_vertices(&mut self) {
+        if self.cached_tile_vertices.is_empty() {
+            return;
+        }
+        self.gpu.queue.write_buffer(
+            &self.vertex_buffer,
+            0,
+            bytemuck::cast_slice(&self.cached_tile_vertices),
+        );
+        self.tiles_need_upload = false;
     }
 
     pub fn begin_frame(
@@ -516,14 +551,9 @@ impl Renderer {
                 self.build_test_map(&mut tile_vertices);
             }
             self.tile_vertex_count = tile_vertices.len() as u32;
-            if !tile_vertices.is_empty() {
-                self.gpu.queue.write_buffer(
-                    &self.vertex_buffer,
-                    0,
-                    bytemuck::cast_slice(&tile_vertices),
-                );
-            }
+            self.cached_tile_vertices = tile_vertices;
             self.tile_cache_key = Some(tile_key);
+            self.tiles_need_upload = true;
         }
 
         let eye = self.camera.eye_position();
@@ -628,6 +658,13 @@ impl Renderer {
         self.scratch_transparent_outline_vertices = transparent_outline_vertices;
         self.scratch_transparent_draws = transparent_draws;
         self.scratch_model_draws = model_draws;
+
+        let total_vertices =
+            self.tile_vertex_count as usize + self.scratch_upload.len();
+        self.ensure_vertex_buffer_capacity(total_vertices);
+        if self.tiles_need_upload {
+            self.upload_tile_vertices();
+        }
 
         if !self.scratch_upload.is_empty() {
             let byte_offset = tile_count as u64 * std::mem::size_of::<Vertex>() as u64;
