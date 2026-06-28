@@ -810,14 +810,23 @@ impl Renderer {
         for y in 0..region.height {
             for x in 0..region.width {
                 let idx = (y * region.width + x) as usize;
+                let tile_pos = TilePos::new(x as i32, y as i32);
                 let tile_type = region.tiles.get(idx).copied().unwrap_or(0);
-                let (height, color) = match tile_type {
-                    0 => (0.12, [0.25, 0.55, 0.28, 1.0]),
-                    1 => (0.2, [0.45, 0.38, 0.25, 1.0]),
-                    2 => (0.05, [0.2, 0.35, 0.65, 1.0]),
-                    _ => (0.1, [0.35, 0.35, 0.35, 1.0]),
+                let is_portal = region
+                    .transitions
+                    .iter()
+                    .any(|t| t.position.x == tile_pos.x && t.position.y == tile_pos.y);
+                let (height, color) = if is_portal {
+                    (0.18, [0.58, 0.22, 0.78, 1.0])
+                } else {
+                    match tile_type {
+                        0 => (0.12, [0.25, 0.55, 0.28, 1.0]),
+                        1 => (0.2, [0.45, 0.38, 0.25, 1.0]),
+                        2 => (0.05, [0.2, 0.35, 0.65, 1.0]),
+                        _ => (0.1, [0.35, 0.35, 0.35, 1.0]),
+                    }
                 };
-                self.add_tile_block(TilePos::new(x as i32, y as i32), height, color, vertices);
+                self.add_tile_block(tile_pos, height, color, vertices);
             }
         }
     }
