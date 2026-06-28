@@ -10,6 +10,8 @@ use crate::entity_bounds;
 use crate::math::{Mat4, Vec3};
 
 const TARGET_PLAYER_HEIGHT: f32 = 1.8;
+/// Loose horizontal bound so humanoid arm span does not shrink height to fit one tile.
+const PLAYER_MODEL_FOOTPRINT: f32 = 4.0;
 const TARGET_NPC_HEIGHT: f32 = 1.6;
 
 #[repr(C)]
@@ -62,8 +64,8 @@ struct MeshData {
     texture: image::DynamicImage,
 }
 
-/// Back-compat alias for the player mesh loader.
-pub type PlayerModel = GlbModel;
+/// Player mesh is either a static GLB or a skinned rig (bind pose when no clips).
+pub type PlayerModel = NpcModel;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -75,24 +77,29 @@ pub struct SkinnedModelVertex {
     pub weights: [f32; 4],
 }
 
+struct SkinnedDrawPart {
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+    bind_group: wgpu::BindGroup,
+    _texture: wgpu::Texture,
+    _sampler: wgpu::Sampler,
+}
+
 pub struct SkinnedGlbModel {
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
-    pub index_count: u32,
+    pub parts: Vec<SkinnedDrawPart>,
     pub uniform_buffer: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
     pub width: f32,
     pub height: f32,
     /// Scale/center bind-pose vertices to the NPC footprint without mutating mesh data.
     pub footprint_matrix: Mat4,
     pub skeleton: Skeleton,
     pub animations: AnimationSet,
+    pub bind_pose_bones: Vec<Mat4>,
     bind_vertices: Vec<SkinnedModelVertex>,
     scratch_vertices: Vec<ModelVertex>,
-    _texture: wgpu::Texture,
-    _sampler: wgpu::Sampler,
 }
 
 pub enum NpcModel {
@@ -120,7 +127,8 @@ impl NpcModel {
     }
 }
 
-const DEFAULT_PLAYER_MODEL: &str = "Pinguin_001.glb";
+const DEFAULT_PLAYER_MODEL: &str = "Superhero_Male_FullBody.gltf";
+const FALLBACK_PLAYER_MODEL: &str = "Pinguin_001.glb";
 pub const MUTANT_TIGER_MODEL: &str = "Tiger_001.glb";
 
 /// NPC id 1 (meadow crawler / Mutant Tiger) uses this model.
@@ -136,7 +144,7 @@ pub fn resolve_player_model_path() -> Option<PathBuf> {
         eprintln!("OpenMMO: OPENMMO_PLAYER_MODEL points to missing file: {env}");
     }
 
-    resolve_model_path(DEFAULT_PLAYER_MODEL)
+    resolve_model_path(DEFAULT_PLAYER_MODEL).or_else(|| resolve_model_path(FALLBACK_PLAYER_MODEL))
 }
 
 pub fn resolve_model_path(filename: &str) -> Option<PathBuf> {
@@ -201,10 +209,22 @@ pub fn load_player_model(
     queue: &wgpu::Queue,
     surface_format: wgpu::TextureFormat,
     path: &Path,
-) -> Result<GlbModel> {
+) -> Result<NpcModel> {
+    if let Ok(model) = load_skinned_glb_model(
+        device,
+        queue,
+        surface_format,
+        path,
+        PLAYER_MODEL_FOOTPRINT,
+        PLAYER_MODEL_FOOTPRINT,
+        TARGET_PLAYER_HEIGHT,
+    ) {
+        entity_bounds::set_player_model_dims(model.width, model.height);
+        return Ok(NpcModel::Skinned(model));
+    }
     let model = load_glb_model(device, queue, surface_format, path, 1.0, 1.0, TARGET_PLAYER_HEIGHT)?;
     entity_bounds::set_player_model_dims(model.width, model.height);
-    Ok(model)
+    Ok(NpcModel::Static(model))
 }
 
 pub fn load_npc_model(
@@ -365,12 +385,6 @@ pub fn load_skinned_glb_model(
         mapped_at_creation: false,
     });
 
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Skinned Model Index Buffer"),
-        contents: bytemuck::cast_slice(&mesh.indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-
     let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Animated NPC Model Uniform Buffer"),
         size: std::mem::size_of::<ModelUniforms>() as u64,
@@ -378,48 +392,72 @@ pub fn load_skinned_glb_model(
         mapped_at_creation: false,
     });
 
-    let (texture, texture_view, sampler) = upload_texture(device, queue, &mesh.texture)?;
+    let mut parts = Vec::with_capacity(mesh.parts.len());
+    for (part_idx, part) in mesh.parts.iter().enumerate() {
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("Skinned Model Index Buffer {part_idx}")),
+            contents: bytemuck::cast_slice(&part.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let (texture, texture_view, sampler) = upload_texture(device, queue, &part.texture)?;
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("Animated NPC Model Bind Group {part_idx}")),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+            ],
+        });
+        parts.push(SkinnedDrawPart {
+            index_buffer,
+            index_count: part.indices.len() as u32,
+            bind_group,
+            _texture: texture,
+            _sampler: sampler,
+        });
+    }
 
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Animated NPC Model Bind Group"),
-        layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&texture_view),
-            },
-        ],
-    });
+    let bind_pose_bones = skeleton.bind_pose();
 
     Ok(SkinnedGlbModel {
         pipeline,
         bind_group_layout,
         vertex_buffer,
-        index_buffer,
-        index_count: mesh.indices.len() as u32,
+        parts,
         uniform_buffer,
-        bind_group,
         width,
         height,
         footprint_matrix,
         skeleton,
         animations,
+        bind_pose_bones,
         bind_vertices,
         scratch_vertices: Vec::with_capacity(vertex_count),
-        _texture: texture,
-        _sampler: sampler,
     })
 }
 
 impl SkinnedGlbModel {
+    pub fn draw_bind_pose(
+        &mut self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        queue: &wgpu::Queue,
+        view_proj: Mat4,
+        instance: &ModelDraw,
+    ) {
+        let bones = self.bind_pose_bones.clone();
+        self.draw_one(render_pass, queue, view_proj, instance, &bones);
+    }
+
     pub fn draw_one(
         &mut self,
         render_pass: &mut wgpu::RenderPass<'_>,
@@ -428,7 +466,7 @@ impl SkinnedGlbModel {
         instance: &ModelDraw,
         bones: &[Mat4],
     ) {
-        if self.index_count == 0 {
+        if self.parts.is_empty() {
             return;
         }
         self.scratch_vertices.clear();
@@ -459,16 +497,22 @@ impl SkinnedGlbModel {
         );
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.draw_indexed(0..self.index_count, 0, 0..1);
+        for part in &self.parts {
+            render_pass.set_index_buffer(part.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.set_bind_group(0, &part.bind_group, &[]);
+            render_pass.draw_indexed(0..part.index_count, 0, 0..1);
+        }
     }
+}
+
+struct SkinnedMeshPartData {
+    indices: Vec<u32>,
+    texture: image::DynamicImage,
 }
 
 struct SkinnedMeshData {
     vertices: Vec<SkinnedModelVertex>,
-    indices: Vec<u32>,
-    texture: image::DynamicImage,
+    parts: Vec<SkinnedMeshPartData>,
 }
 
 fn load_skinned_mesh_data(path: &Path) -> Result<(SkinnedMeshData, Skeleton, AnimationSet)> {
@@ -477,8 +521,7 @@ fn load_skinned_mesh_data(path: &Path) -> Result<(SkinnedMeshData, Skeleton, Ani
         crate::animation::load_animation_from_document(&document, &buffers)?;
 
     let mut vertices = Vec::new();
-    let mut indices = Vec::new();
-    let mut found = false;
+    let mut parts = Vec::new();
 
     for node in document.nodes() {
         let Some(mesh) = node.mesh() else { continue };
@@ -506,6 +549,7 @@ fn load_skinned_mesh_data(path: &Path) -> Result<(SkinnedMeshData, Skeleton, Ani
             let weights: Vec<[f32; 4]> = weights_iter.into_f32().collect();
 
             let base = vertices.len() as u32;
+            let mut indices = Vec::new();
             for i in 0..positions.len() {
                 let mut w = weights[i];
                 let sum = w[0] + w[1] + w[2] + w[3];
@@ -530,36 +574,51 @@ fn load_skinned_mesh_data(path: &Path) -> Result<(SkinnedMeshData, Skeleton, Ani
                     indices.push(base + i);
                 }
             }
-            found = true;
-            break;
-        }
-        if found {
-            break;
+
+            let texture = texture_for_material(&document, &images, primitive.material());
+            parts.push(SkinnedMeshPartData { indices, texture });
         }
     }
 
-    if !found || vertices.is_empty() {
+    if vertices.is_empty() || parts.is_empty() {
         anyhow::bail!("glb contains no skinned mesh geometry");
     }
 
-    let texture = if let Some(image) = images.into_iter().next() {
-        gltf_image_to_dynamic(&image).unwrap_or_else(|err| {
-            tracing::warn!(%err, "failed to convert skinned model texture; using material color");
-            material_fallback_texture(&document)
-        })
-    } else {
-        material_fallback_texture(&document)
-    };
-
     Ok((
-        SkinnedMeshData {
-            vertices,
-            indices,
-            texture,
-        },
+        SkinnedMeshData { vertices, parts },
         skeleton,
         animations,
     ))
+}
+
+fn texture_for_material(
+    document: &gltf::Document,
+    images: &[gltf::image::Data],
+    material: gltf::Material,
+) -> image::DynamicImage {
+    if let Some(tex) = material.pbr_metallic_roughness().base_color_texture() {
+        let idx = tex.texture().source().index();
+        if let Some(image) = images.get(idx) {
+            if let Ok(texture) = gltf_image_to_dynamic(image) {
+                return texture;
+            }
+        }
+    }
+    material_fallback_texture_for_material(material)
+        .unwrap_or_else(|| material_fallback_texture(document))
+}
+
+fn material_fallback_texture_for_material(material: gltf::Material) -> Option<image::DynamicImage> {
+    let factor = material.pbr_metallic_roughness().base_color_factor();
+    let r = (factor[0] * 255.0) as u8;
+    let g = (factor[1] * 255.0) as u8;
+    let b = (factor[2] * 255.0) as u8;
+    let a = (factor[3] * 255.0) as u8;
+    Some(image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        1,
+        1,
+        image::Rgba([r, g, b, a]),
+    )))
 }
 
 fn read_skin_joints(joints_iter: gltf::mesh::util::ReadJoints<'_>) -> Vec<[u32; 4]> {
@@ -1365,28 +1424,50 @@ mod tests {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets/models")
             .join(DEFAULT_PLAYER_MODEL);
-        assert!(path.is_file(), "missing penguin model at {path:?}");
+        assert!(path.is_file(), "missing player model at {path:?}");
     }
 
     #[test]
-    fn resolve_player_model_path_finds_penguin() {
-        let path = resolve_player_model_path().expect("penguin model should resolve");
+    fn resolve_player_model_path_finds_superhero() {
+        let path = resolve_player_model_path().expect("player model should resolve");
         assert!(path.is_file(), "resolved path missing: {path:?}");
+        assert!(
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.contains("Superhero_Male")),
+            "expected superhero model, got {}",
+            path.display()
+        );
     }
 
     #[test]
-    fn penguin_glb_reports_image_format() {
-        let path = resolve_player_model_path().expect("penguin model should resolve");
+    fn superhero_gltf_reports_textures() {
+        let path = resolve_player_model_path().expect("player model should resolve");
         let (_doc, _bufs, images) = gltf::import(&path).expect("import");
-        for (i, image) in images.iter().enumerate() {
-            eprintln!(
-                "image {i}: {}x{} format={:?} bytes={}",
-                image.width,
-                image.height,
-                image.format,
-                image.pixels.len()
-            );
+        assert!(!images.is_empty(), "superhero model should ship textures");
+    }
+
+    #[test]
+    fn superhero_skinned_mesh_loads_all_parts() {
+        let path = resolve_player_model_path().expect("player model should resolve");
+        let (mesh, skeleton, _) = load_skinned_mesh_data(&path).expect("load superhero mesh");
+        assert!(mesh.vertices.len() > 1000, "expected full-body vertex count");
+        assert_eq!(mesh.parts.len(), 3, "hair, eyes, and body meshes");
+        let index_count: usize = mesh.parts.iter().map(|p| p.indices.len()).sum();
+        assert!(index_count > 1000);
+        assert!(skeleton.joint_count > 0);
+        let bones = skeleton.bind_pose();
+        let mut max_err = 0.0f32;
+        for v in &mesh.vertices {
+            let skinned = skin_vertex_position(&bones, v.joints, v.weights, v.position);
+            for axis in 0..3 {
+                max_err = max_err.max((skinned[axis] - v.position[axis]).abs());
+            }
         }
+        assert!(
+            max_err < 0.05,
+            "bind-pose skinning should preserve vertex positions (max err {max_err})"
+        );
     }
 
     #[test]
@@ -1409,13 +1490,19 @@ mod tests {
     }
 
     #[test]
-    fn penguin_glb_loads_geometry() {
-        let path = resolve_player_model_path().expect("penguin model should resolve");
-        let mesh = load_mesh_data(&path, 1.0, 1.0, TARGET_PLAYER_HEIGHT).expect("mesh load");
+    fn superhero_gltf_loads_geometry() {
+        let path = resolve_player_model_path().expect("player model should resolve");
+        let (mesh, _, _) = load_skinned_mesh_data(&path).expect("skinned mesh load");
         assert!(!mesh.vertices.is_empty());
-        assert!(!mesh.indices.is_empty());
-        let (width, height) = compute_bounds(&mesh.vertices);
-        assert!((height - TARGET_PLAYER_HEIGHT).abs() < 0.01);
-        assert!(width > 0.0);
+        assert!(!mesh.parts.is_empty());
+        let footprint = skinned_footprint_matrix(
+            &mesh.vertices,
+            PLAYER_MODEL_FOOTPRINT,
+            PLAYER_MODEL_FOOTPRINT,
+            TARGET_PLAYER_HEIGHT,
+        );
+        let (width, height) = skinned_footprint_dims(&mesh.vertices, footprint);
+        assert!((height - TARGET_PLAYER_HEIGHT).abs() < 0.05);
+        assert!(width > 0.2);
     }
 }

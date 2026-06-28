@@ -4,3 +4,7 @@ models:
   source: Frog.glb
   format: glb
   size_bytes: 574980
+- name: superhero_male
+  source: Superhero_Male_FullBody.gltf
+  format: gltf
+  size_bytes: 30989
