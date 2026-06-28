@@ -115,6 +115,12 @@ impl EntityMovementInterp {
             Some(entry.facing_yaw)
         }
     }
+
+    pub fn is_moving(&self, id: EntityId, now: Instant) -> bool {
+        self.entries.get(&id).is_some_and(|entry| {
+            entry.from != entry.to && progress(entry.started_at, now) < 1.0
+        })
+    }
 }
 
 fn footprint_world_center(

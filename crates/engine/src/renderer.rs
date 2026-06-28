@@ -5,13 +5,15 @@ use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
 use openmmo_common::{ContentPack, EntityId, NpcFootprint, NpcId, RegionDef, TilePos, WorldEntity};
 
+use crate::animation::{AnimationPlayer, DeathCorpse, FROG_ATTACK, FROG_IDLE, FROG_JUMP};
 use crate::camera::Camera;
 use crate::entity_bounds;
 use crate::math::Vec3;
 use crate::mesh::{Mesh, ModelCache};
 use crate::model::{
-    entity_model_matrix, load_npc_model, load_player_model, resolve_model_path, GlbModel,
-    ModelDraw, ModelTarget, MUTANT_TIGER_MODEL, MUTANT_TIGER_NPC_ID,
+    entity_model_matrix, load_npc_model, load_player_model, load_skinned_npc_model,
+    resolve_model_path, resolve_npc_glb_path, GlbModel, ModelDraw, ModelTarget, NpcModel,
+    MUTANT_TIGER_MODEL, MUTANT_TIGER_NPC_ID,
 };
 use crate::movement_interp::EntityMovementInterp;
 
@@ -80,11 +82,16 @@ pub struct Renderer {
     scratch_transparent_draws: Vec<TransparentDraw>,
     scratch_upload: Vec<Vertex>,
     player_model: Option<GlbModel>,
-    npc_models: HashMap<NpcId, GlbModel>,
+    npc_models: HashMap<NpcId, NpcModel>,
     scratch_model_draws: Vec<ModelDraw>,
 }
 
 impl Renderer {
+    pub fn is_skinned_npc(&self, npc_id: NpcId) -> bool {
+        self.npc_models
+            .get(&npc_id)
+            .is_some_and(NpcModel::is_skinned)
+    }
     pub async fn new(
         window: std::sync::Arc<egui_winit::winit::window::Window>,
         player_model_path: Option<&std::path::Path>,
@@ -360,11 +367,48 @@ impl Renderer {
             ) {
                 Ok(model) => {
                     eprintln!("OpenMMO: loaded Mutant Tiger model from {}", path.display());
-                    npc_models.insert(MUTANT_TIGER_NPC_ID, model);
+                    npc_models.insert(MUTANT_TIGER_NPC_ID, NpcModel::Static(model));
                 }
                 Err(err) => {
                     eprintln!(
                         "OpenMMO: failed to load Mutant Tiger model from {}: {err}",
+                        path.display()
+                    );
+                }
+            }
+        }
+
+        for npc_def in &content.npcs {
+            if npc_def.id == MUTANT_TIGER_NPC_ID {
+                continue;
+            }
+            let Some(model_name) = npc_def.model.as_deref() else {
+                continue;
+            };
+            let Some(path) = resolve_npc_glb_path(model_name) else {
+                continue;
+            };
+            let footprint = NpcFootprint::from_def(npc_def);
+            match load_skinned_npc_model(
+                &device,
+                &queue,
+                format,
+                npc_def.id,
+                &path,
+                footprint,
+            ) {
+                Ok(model) => {
+                    eprintln!(
+                        "OpenMMO: loaded skinned NPC model for {} from {}",
+                        npc_def.name,
+                        path.display()
+                    );
+                    npc_models.insert(npc_def.id, NpcModel::Skinned(model));
+                }
+                Err(err) => {
+                    eprintln!(
+                        "OpenMMO: failed to load skinned model for {} from {}: {err}",
+                        npc_def.name,
                         path.display()
                     );
                 }
@@ -527,6 +571,9 @@ impl Renderer {
         local_player: Option<openmmo_common::PlayerId>,
         movement_interp: &EntityMovementInterp,
         hover: Option<HoverTarget>,
+        npc_animations: &mut HashMap<EntityId, AnimationPlayer>,
+        death_corpses: &mut [DeathCorpse],
+        dt: f32,
     ) {
         let vp = self
             .camera
@@ -711,13 +758,63 @@ impl Renderer {
         }
 
         for draw in &self.scratch_model_draws {
-            let model = match draw.target {
-                ModelTarget::Player => self.player_model.as_ref(),
-                ModelTarget::Npc(id) => self.npc_models.get(&id),
-            };
-            if let Some(model) = model {
-                model.draw_one(&mut render_pass, &self.gpu.queue, vp, draw);
+            match draw.target {
+                ModelTarget::Player => {
+                    if let Some(model) = self.player_model.as_ref() {
+                        model.draw_one(&mut render_pass, &self.gpu.queue, vp, draw);
+                    }
+                }
+                ModelTarget::Npc(npc_id) => {
+                    let Some(npc_model) = self.npc_models.get(&npc_id) else {
+                        continue;
+                    };
+                    match npc_model {
+                        NpcModel::Static(model) => {
+                            model.draw_one(&mut render_pass, &self.gpu.queue, vp, draw);
+                        }
+                        NpcModel::Skinned(model) => {
+                            let Some(entity_id) = draw.entity_id else {
+                                continue;
+                            };
+                            let player = npc_animations.entry(entity_id).or_insert_with(|| {
+                                AnimationPlayer::new(FROG_IDLE)
+                            });
+                            update_skinned_npc_clip(
+                                player,
+                                movement_interp,
+                                entity_id,
+                                now,
+                            );
+                            player.advance(dt, &model.animations);
+                            let bones = player.bone_matrices(&model.skeleton, &model.animations);
+                            model.draw_one(
+                                &mut render_pass,
+                                &self.gpu.queue,
+                                vp,
+                                draw,
+                                &bones,
+                            );
+                        }
+                    }
+                }
             }
+        }
+
+        for corpse in death_corpses.iter_mut() {
+            let Some(NpcModel::Skinned(model)) = self.npc_models.get(&corpse.npc_id) else {
+                continue;
+            };
+            corpse.player.advance(dt, &model.animations);
+            let bones = corpse
+                .player
+                .bone_matrices(&model.skeleton, &model.animations);
+            let draw = ModelDraw {
+                target: ModelTarget::Npc(corpse.npc_id),
+                model: entity_model_matrix(corpse.base, corpse.yaw),
+                tint: [1.0, 1.0, 1.0, 1.0],
+                entity_id: None,
+            };
+            model.draw_one(&mut render_pass, &self.gpu.queue, vp, &draw, &bones);
         }
 
         if opaque_outline_count > 0 {
@@ -912,6 +1009,7 @@ impl Renderer {
                         target: ModelTarget::Player,
                         model: entity_model_matrix([cx, surface_y, cz], yaw),
                         tint,
+                        entity_id: None,
                     });
                     return;
                 }
@@ -943,7 +1041,11 @@ impl Renderer {
                         target: ModelTarget::Npc(*npc_id),
                         model: entity_model_matrix([cx, surface_y, cz], yaw),
                         tint: [1.0, 1.0, 1.0, 1.0],
+                        entity_id: Some(entity.entity_id),
                     });
+                    return;
+                }
+                if self.is_skinned_npc(*npc_id) {
                     return;
                 }
                 let alive = *hp > 0;
@@ -1279,6 +1381,24 @@ fn push_line(a: [f32; 3], b: [f32; 3], color: [f32; 4], vertices: &mut Vec<Verte
 fn push_tri(a: [f32; 3], b: [f32; 3], c: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
     for position in [a, b, c] {
         vertices.push(Vertex { position, color });
+    }
+}
+
+fn update_skinned_npc_clip(
+    player: &mut AnimationPlayer,
+    movement_interp: &EntityMovementInterp,
+    entity_id: EntityId,
+    now: Instant,
+) {
+    if player.is_playing(FROG_ATTACK) && !player.finished {
+        return;
+    }
+    if movement_interp.is_moving(entity_id, now) {
+        if !player.is_playing(FROG_JUMP) {
+            player.play(FROG_JUMP, true);
+        }
+    } else if player.current_clip() != Some(FROG_IDLE) {
+        player.play(FROG_IDLE, true);
     }
 }
 

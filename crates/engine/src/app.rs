@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Instant;
 
@@ -5,12 +6,13 @@ use egui_wgpu::wgpu;
 use egui_wgpu::Renderer as EguiRenderer;
 use egui_winit::winit;
 use egui_winit::State as EguiWinitState;
-use openmmo_common::{ContentPack, EntityKind, Equipment, RegionDef, RegionId, WorldEntity};
+use openmmo_common::{ContentPack, EntityKind, Equipment, NpcFootprint, RegionDef, RegionId, WorldEntity};
 use openmmo_protocol::{ClientMessage, ServerMessage};
 
 use egui_winit::egui;
 
 use crate::{
+    animation::{AnimationPlayer, DeathCorpse, FROG_ATTACK, FROG_DEATH, FROG_IDLE},
     entity_bounds,
     input::InputState,
     mesh::{default_assets_dir, ModelCache},
@@ -56,6 +58,9 @@ pub struct EngineApp {
     pub net_rx: Option<Receiver<ServerMessage>>,
     pointer_over_ui: bool,
     pub player_model_path: Option<std::path::PathBuf>,
+    npc_animations: HashMap<openmmo_common::EntityId, AnimationPlayer>,
+    death_corpses: Vec<DeathCorpse>,
+    last_frame: Instant,
 }
 
 impl Default for EngineApp {
@@ -82,6 +87,9 @@ impl Default for EngineApp {
             net_rx: None,
             pointer_over_ui: false,
             player_model_path: resolve_player_model_path(),
+            npc_animations: HashMap::new(),
+            death_corpses: Vec::new(),
+            last_frame: Instant::now(),
         }
     }
 }
@@ -367,16 +375,35 @@ impl EngineApp {
                         self.combat_opponent = Some(source);
                     }
                 }
+                if let Some(entity) = self.entities.iter().find(|e| e.entity_id == source) {
+                    if let EntityKind::Npc { npc_id, .. } = &entity.kind {
+                        if self
+                            .content
+                            .npc(*npc_id)
+                            .and_then(|d| d.model.as_deref())
+                            .is_some()
+                        {
+                            self.npc_animations
+                                .entry(source)
+                                .or_insert_with(|| AnimationPlayer::new(FROG_IDLE))
+                                .play(FROG_ATTACK, false);
+                        }
+                    }
+                }
                 self.sync_local_hp();
             }
             ServerMessage::Death { entity, .. } => {
                 self.ui.combat_log.push(format!("Entity {} died", entity.0));
+                if let Some(corpse) = self.capture_death_corpse(entity) {
+                    self.death_corpses.push(corpse);
+                }
                 if self.combat_opponent == Some(entity) {
                     self.combat_opponent = None;
                 }
                 if self.local_entity_id() == Some(entity) {
                     self.combat_opponent = None;
                 }
+                self.npc_animations.remove(&entity);
                 self.movement_interp.remove(entity);
                 self.entities.retain(|e| e.entity_id != entity);
             }
@@ -484,6 +511,47 @@ impl EngineApp {
         }
         self.entities.retain(|e| ids.contains(&e.entity_id));
         self.movement_interp.prune(&ids);
+        self.npc_animations.retain(|id, _| ids.contains(id));
+    }
+
+    fn capture_death_corpse(&self, entity_id: openmmo_common::EntityId) -> Option<DeathCorpse> {
+        let entity = self.entities.iter().find(|e| e.entity_id == entity_id)?;
+        let EntityKind::Npc { npc_id, .. } = &entity.kind else {
+            return None;
+        };
+        if self
+            .content
+            .npc(*npc_id)
+            .and_then(|d| d.model.as_deref())
+            .is_none()
+        {
+            return None;
+        }
+        let footprint = self.content.npc(*npc_id).map(NpcFootprint::from_def);
+        let now = Instant::now();
+        let base = self
+            .movement_interp
+            .visual_center(entity_id, now, self.region.as_ref(), footprint)
+            .or_else(|| {
+                entity_bounds::entity_tile(entity).map(|tile| {
+                    let surface_y = entity_bounds::tile_surface_height(tile, self.region.as_ref());
+                    footprint
+                        .unwrap_or_default()
+                        .world_center(tile, surface_y)
+                })
+            })?;
+        let yaw = self
+            .movement_interp
+            .visual_facing_yaw(entity_id, now)
+            .unwrap_or(0.0);
+        let mut player = AnimationPlayer::new(FROG_DEATH);
+        player.play(FROG_DEATH, false);
+        Some(DeathCorpse {
+            npc_id: *npc_id,
+            base,
+            yaw,
+            player,
+        })
     }
 
     fn local_entity_id(&self) -> Option<openmmo_common::EntityId> {
@@ -638,6 +706,10 @@ impl EngineApp {
 
         let hover = self.compute_hover(renderer);
 
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
+        self.last_frame = now;
+
         renderer.render_world_pass(
             &mut encoder,
             &view,
@@ -648,7 +720,12 @@ impl EngineApp {
             self.local_player,
             &self.movement_interp,
             hover,
+            &mut self.npc_animations,
+            &mut self.death_corpses,
+            dt,
         );
+
+        self.death_corpses.retain(|c| !c.player.finished);
 
         let raw_input = egui_state.take_egui_input(window);
 
