@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use egui_wgpu::wgpu;
 use egui_wgpu::Renderer as EguiRenderer;
@@ -17,7 +17,7 @@ use crate::{
     input::InputState,
     mesh::{default_assets_dir, ModelCache},
     model::resolve_player_model_path,
-    movement_interp::EntityMovementInterp,
+    movement_interp::{EntityMovementInterp, ServerClock},
     renderer::{HoverTarget, Renderer},
     ui::{
         build_context_menu, draw_combat_health_bars, setup_theme, to_client_message, GameUi,
@@ -43,6 +43,7 @@ pub struct EngineApp {
     pub model_cache: ModelCache,
     pub entities: Vec<WorldEntity>,
     pub movement_interp: EntityMovementInterp,
+    server_clock: ServerClock,
     pub region: Option<RegionDef>,
     pub current_region_id: RegionId,
     pub local_player: Option<openmmo_common::PlayerId>,
@@ -72,6 +73,7 @@ impl Default for EngineApp {
             model_cache: ModelCache::new(default_assets_dir()),
             entities: Vec::new(),
             movement_interp: EntityMovementInterp::default(),
+            server_clock: ServerClock::default(),
             region: None,
             current_region_id: RegionId(1),
             local_player: None,
@@ -257,6 +259,7 @@ impl EngineApp {
                 entities,
                 local_player,
                 region_id,
+                tick,
                 ..
             } => {
                 self.current_region_id = region_id;
@@ -265,6 +268,9 @@ impl EngineApp {
                 if let Some(lp) = local_player {
                     self.local_player = Some(lp);
                 }
+                let now = Instant::now();
+                self.server_clock.reset(tick, now);
+                self.seed_movement_interp(now);
                 self.sync_local_hp();
             }
             ServerMessage::RegionChanged {
@@ -289,10 +295,14 @@ impl EngineApp {
                         }
                     }
                 }
+                let now = Instant::now();
+                self.seed_movement_interp(now);
                 self.sync_local_hp();
             }
-            ServerMessage::StateDelta { entities, .. } => {
-                self.merge_entities(entities);
+            ServerMessage::StateDelta { tick, entities } => {
+                let now = Instant::now();
+                let segment_start = self.server_clock.on_tick(tick, now);
+                self.merge_entities(entities, segment_start, now);
                 self.sync_local_hp();
             }
             ServerMessage::PlayerUpdate {
@@ -303,6 +313,13 @@ impl EngineApp {
                 ..
             } => {
                 let now = Instant::now();
+                let segment_start = self
+                    .server_clock
+                    .tick_start(self.server_clock.anchor_tick())
+                    .max(
+                        now.checked_sub(Duration::from_millis(openmmo_common::TICK_MS))
+                            .unwrap_or(now),
+                    );
                 for entity in &mut self.entities {
                     if let EntityKind::Player {
                         player_id: pid,
@@ -313,10 +330,14 @@ impl EngineApp {
                     } = &mut entity.kind
                     {
                         if *pid == player_id {
+                            let footprint = None;
                             self.movement_interp.on_position_change(
                                 entity.entity_id,
                                 position,
+                                segment_start,
                                 now,
+                                self.region.as_ref(),
+                                footprint,
                             );
                             *pos = position;
                             *ehp = hp;
@@ -486,8 +507,34 @@ impl EngineApp {
         }
     }
 
-    fn merge_entities(&mut self, entities: Vec<WorldEntity>) {
-        let now = Instant::now();
+    fn entity_footprint(&self, entity: &WorldEntity) -> Option<NpcFootprint> {
+        match &entity.kind {
+            EntityKind::Npc { npc_id, .. } => {
+                self.content.npc(*npc_id).map(NpcFootprint::from_def)
+            }
+            _ => None,
+        }
+    }
+
+    fn seed_movement_interp(&mut self, _now: Instant) {
+        for entity in &self.entities {
+            if let Some(tile) = entity_bounds::entity_tile(entity) {
+                self.movement_interp.seed_position(
+                    entity.entity_id,
+                    tile,
+                    self.region.as_ref(),
+                    self.entity_footprint(entity),
+                );
+            }
+        }
+    }
+
+    fn merge_entities(
+        &mut self,
+        entities: Vec<WorldEntity>,
+        segment_start: Instant,
+        now: Instant,
+    ) {
         let region_id = self.current_region_id;
         let filtered: Vec<_> = entities
             .into_iter()
@@ -496,8 +543,14 @@ impl EngineApp {
         let ids: std::collections::HashSet<_> = filtered.iter().map(|e| e.entity_id).collect();
         for entity in filtered {
             if let Some(tile) = entity_bounds::entity_tile(&entity) {
-                self.movement_interp
-                    .on_position_change(entity.entity_id, tile, now);
+                self.movement_interp.on_position_change(
+                    entity.entity_id,
+                    tile,
+                    segment_start,
+                    now,
+                    self.region.as_ref(),
+                    self.entity_footprint(&entity),
+                );
             }
             if let Some(existing) = self
                 .entities
@@ -675,22 +728,34 @@ impl EngineApp {
     ) {
         self.poll_network();
 
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
+        self.last_frame = now;
+
         if self.ui.connected {
             if let Some(entity) = self.local_player.and_then(|lp| {
                 self.entities.iter().find(
                     |e| matches!(&e.kind, EntityKind::Player { player_id, .. } if *player_id == lp),
                 )
             }) {
-                let now = Instant::now();
-                if let Some([cx, _, cz]) = self.movement_interp.visual_center(
+                if let Some([cx, cy, cz]) = self.movement_interp.visual_center(
                     entity.entity_id,
                     now,
                     self.region.as_ref(),
                     None,
                 ) {
-                    renderer.camera_mut().center_on_world(cx, cz);
+                    renderer.camera_mut().follow_world(cx, cy, cz, dt);
                 } else if let Some(position) = entity_bounds::entity_tile(entity) {
-                    renderer.camera_mut().center_on_tile(position);
+                    let surface_y =
+                        entity_bounds::tile_surface_height(position, self.region.as_ref());
+                    renderer
+                        .camera_mut()
+                        .follow_world(
+                            position.x as f32 + 0.5,
+                            surface_y,
+                            position.y as f32 + 0.5,
+                            dt,
+                        );
                 }
             }
         }
@@ -705,10 +770,6 @@ impl EngineApp {
         };
 
         let hover = self.compute_hover(renderer);
-
-        let now = Instant::now();
-        let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
-        self.last_frame = now;
 
         renderer.render_world_pass(
             &mut encoder,

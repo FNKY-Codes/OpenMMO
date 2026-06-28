@@ -43,6 +43,14 @@ impl Camera {
         self.target_y = 0.9;
     }
 
+    /// Smoothly follow a world position (reduces camera jitter during movement).
+    pub fn follow_world(&mut self, x: f32, y: f32, z: f32, dt: f32) {
+        let alpha = 1.0 - (-12.0 * dt).exp();
+        self.target_x += (x - self.target_x) * alpha;
+        self.target_y += (y - self.target_y) * alpha;
+        self.target_z += (z - self.target_z) * alpha;
+    }
+
     pub fn rotate(&mut self, dyaw: f32, dpitch: f32) {
         self.yaw += dyaw;
         self.pitch = (self.pitch + dpitch).clamp(0.15, 1.35);

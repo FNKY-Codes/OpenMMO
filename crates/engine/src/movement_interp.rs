@@ -7,10 +7,69 @@ use crate::entity_bounds;
 
 #[derive(Debug, Clone, Copy)]
 struct Entry {
-    from: TilePos,
-    to: TilePos,
-    started_at: Instant,
+    from_world: [f32; 3],
+    to_world: [f32; 3],
+    from_tile: TilePos,
+    to_tile: TilePos,
+    /// Wall-clock instant when this tile step began (derived from server tick).
+    segment_start: Instant,
     facing_yaw: f32,
+}
+
+/// Maps server tick numbers to wall-clock time for stable interpolation.
+#[derive(Debug, Clone, Copy)]
+pub struct ServerClock {
+    anchor_tick: u64,
+    anchor_time: Instant,
+}
+
+fn instant_before(at: Instant, amount: Duration) -> Instant {
+    at.checked_sub(amount).unwrap_or(at)
+}
+
+impl ServerClock {
+    pub fn anchor_tick(&self) -> u64 {
+        self.anchor_tick
+    }
+
+    pub fn reset(&mut self, tick: u64, received_at: Instant) {
+        self.anchor_tick = tick;
+        self.anchor_time = received_at;
+    }
+
+    /// Wall time when the server began processing `tick`.
+    pub fn tick_start(&self, tick: u64) -> Instant {
+        if self.anchor_tick == 0 {
+            return instant_before(self.anchor_time, Duration::from_millis(TICK_MS));
+        }
+        let delta_ticks = tick.saturating_sub(self.anchor_tick) as u64;
+        instant_before(
+            self.anchor_time + Duration::from_millis(delta_ticks * TICK_MS),
+            Duration::from_millis(TICK_MS),
+        )
+    }
+
+    pub fn on_tick(&mut self, tick: u64, received_at: Instant) -> Instant {
+        let start = if self.anchor_tick == 0 || tick < self.anchor_tick {
+            self.reset(tick, received_at);
+            instant_before(received_at, Duration::from_millis(TICK_MS))
+        } else {
+            let start = self.tick_start(tick);
+            self.anchor_tick = tick;
+            self.anchor_time = received_at;
+            start
+        };
+        start
+    }
+}
+
+impl Default for ServerClock {
+    fn default() -> Self {
+        Self {
+            anchor_tick: 0,
+            anchor_time: Instant::now(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -22,12 +81,16 @@ fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-fn tile_world_xz(tile: TilePos) -> (f32, f32) {
-    (tile.x as f32 + 0.5, tile.y as f32 + 0.5)
+fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        lerp_f32(a[0], b[0], t),
+        lerp_f32(a[1], b[1], t),
+        lerp_f32(a[2], b[2], t),
+    ]
 }
 
-fn progress(started_at: Instant, now: Instant) -> f32 {
-    let elapsed = now.saturating_duration_since(started_at);
+fn progress(segment_start: Instant, now: Instant) -> f32 {
+    let elapsed = now.saturating_duration_since(segment_start);
     let tick = Duration::from_millis(TICK_MS);
     if tick.is_zero() {
         return 1.0;
@@ -46,34 +109,80 @@ fn tile_movement_yaw(from: TilePos, to: TilePos) -> Option<f32> {
 }
 
 impl EntityMovementInterp {
-    pub fn on_position_change(&mut self, id: EntityId, new_pos: TilePos, now: Instant) {
+    pub fn seed_position(
+        &mut self,
+        id: EntityId,
+        pos: TilePos,
+        region: Option<&RegionDef>,
+        footprint: Option<NpcFootprint>,
+    ) {
+        let fp = footprint.unwrap_or_default();
+        let world = footprint_world_center(pos, region, fp);
+        self.entries.insert(
+            id,
+            Entry {
+                from_world: world,
+                to_world: world,
+                from_tile: pos,
+                to_tile: pos,
+                segment_start: Instant::now(),
+                facing_yaw: 0.0,
+            },
+        );
+    }
+
+    pub fn on_position_change(
+        &mut self,
+        id: EntityId,
+        new_pos: TilePos,
+        segment_start: Instant,
+        now: Instant,
+        region: Option<&RegionDef>,
+        footprint: Option<NpcFootprint>,
+    ) {
+        let fp = footprint.unwrap_or_default();
+        let new_world = footprint_world_center(new_pos, region, fp);
+
         let entry = match self.entries.get(&id) {
             Some(existing) => {
-                let old = existing.to;
-                if old == new_pos {
+                if existing.to_tile == new_pos {
                     return;
                 }
-                let facing_yaw = tile_movement_yaw(old, new_pos).unwrap_or(existing.facing_yaw);
-                if old.chebyshev_distance(&new_pos) > 1 {
+                let facing_yaw = tile_movement_yaw(existing.to_tile, new_pos)
+                    .unwrap_or(existing.facing_yaw);
+
+                if existing.to_tile.chebyshev_distance(&new_pos) > 1 {
                     Entry {
-                        from: new_pos,
-                        to: new_pos,
-                        started_at: now,
+                        from_world: new_world,
+                        to_world: new_world,
+                        from_tile: new_pos,
+                        to_tile: new_pos,
+                        segment_start,
                         facing_yaw,
                     }
                 } else {
+                    let t = progress(existing.segment_start, now);
+                    let from_world = if existing.from_tile != existing.to_tile && t < 1.0 {
+                        lerp3(existing.from_world, existing.to_world, t)
+                    } else {
+                        existing.to_world
+                    };
                     Entry {
-                        from: old,
-                        to: new_pos,
-                        started_at: now,
+                        from_world,
+                        to_world: new_world,
+                        from_tile: existing.to_tile,
+                        to_tile: new_pos,
+                        segment_start,
                         facing_yaw,
                     }
                 }
             }
             None => Entry {
-                from: new_pos,
-                to: new_pos,
-                started_at: now,
+                from_world: new_world,
+                to_world: new_world,
+                from_tile: new_pos,
+                to_tile: new_pos,
+                segment_start,
                 facing_yaw: 0.0,
             },
         };
@@ -96,21 +205,15 @@ impl EntityMovementInterp {
         footprint: Option<NpcFootprint>,
     ) -> Option<[f32; 3]> {
         let entry = self.entries.get(&id)?;
-        let t = progress(entry.started_at, now);
-        let fp = footprint.unwrap_or_default();
-        let from_center = footprint_world_center(entry.from, region, fp);
-        let to_center = footprint_world_center(entry.to, region, fp);
-        Some([
-            lerp_f32(from_center[0], to_center[0], t),
-            lerp_f32(from_center[1], to_center[1], t),
-            lerp_f32(from_center[2], to_center[2], t),
-        ])
+        let _ = (region, footprint);
+        let t = progress(entry.segment_start, now);
+        Some(lerp3(entry.from_world, entry.to_world, t))
     }
 
     pub fn visual_facing_yaw(&self, id: EntityId, now: Instant) -> Option<f32> {
         let entry = self.entries.get(&id)?;
-        if entry.from != entry.to && progress(entry.started_at, now) < 1.0 {
-            tile_movement_yaw(entry.from, entry.to).or(Some(entry.facing_yaw))
+        if entry.from_tile != entry.to_tile && progress(entry.segment_start, now) < 1.0 {
+            tile_movement_yaw(entry.from_tile, entry.to_tile).or(Some(entry.facing_yaw))
         } else {
             Some(entry.facing_yaw)
         }
@@ -118,7 +221,7 @@ impl EntityMovementInterp {
 
     pub fn is_moving(&self, id: EntityId, now: Instant) -> bool {
         self.entries.get(&id).is_some_and(|entry| {
-            entry.from != entry.to && progress(entry.started_at, now) < 1.0
+            entry.from_tile != entry.to_tile && progress(entry.segment_start, now) < 1.0
         })
     }
 }
@@ -146,9 +249,10 @@ mod tests {
         let mut interp = EntityMovementInterp::default();
         let id = EntityId(1);
         let pos = TilePos::new(3, 4);
-        interp.on_position_change(id, pos, now());
+        let t = now();
+        interp.on_position_change(id, pos, t, t, None, None);
 
-        let center = interp.visual_center(id, now(), None, None).unwrap();
+        let center = interp.visual_center(id, t, None, None).unwrap();
         assert!((center[0] - 3.5).abs() < f32::EPSILON);
         assert!((center[2] - 4.5).abs() < f32::EPSILON);
     }
@@ -158,8 +262,8 @@ mod tests {
         let mut interp = EntityMovementInterp::default();
         let id = EntityId(1);
         let start = now();
-        interp.on_position_change(id, TilePos::new(0, 0), start);
-        interp.on_position_change(id, TilePos::new(1, 0), start);
+        interp.on_position_change(id, TilePos::new(0, 0), start, start, None, None);
+        interp.on_position_change(id, TilePos::new(1, 0), start, start, None, None);
 
         let mid = start + Duration::from_millis(TICK_MS / 2);
         let center = interp.visual_center(id, mid, None, None).unwrap();
@@ -172,8 +276,8 @@ mod tests {
         let mut interp = EntityMovementInterp::default();
         let id = EntityId(1);
         let start = now();
-        interp.on_position_change(id, TilePos::new(0, 0), start);
-        interp.on_position_change(id, TilePos::new(5, 5), start);
+        interp.on_position_change(id, TilePos::new(0, 0), start, start, None, None);
+        interp.on_position_change(id, TilePos::new(5, 5), start, start, None, None);
 
         let mid = start + Duration::from_millis(TICK_MS / 2);
         let center = interp.visual_center(id, mid, None, None).unwrap();
@@ -186,8 +290,8 @@ mod tests {
         let mut interp = EntityMovementInterp::default();
         let id = EntityId(1);
         let start = now();
-        interp.on_position_change(id, TilePos::new(0, 0), start);
-        interp.on_position_change(id, TilePos::new(1, 0), start);
+        interp.on_position_change(id, TilePos::new(0, 0), start, start, None, None);
+        interp.on_position_change(id, TilePos::new(1, 0), start, start, None, None);
 
         let yaw = interp.visual_facing_yaw(id, start).unwrap();
         assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 0.01);
@@ -198,11 +302,49 @@ mod tests {
         let mut interp = EntityMovementInterp::default();
         let id = EntityId(1);
         let start = now();
-        interp.on_position_change(id, TilePos::new(0, 0), start);
-        interp.on_position_change(id, TilePos::new(1, 0), start);
+        interp.on_position_change(id, TilePos::new(0, 0), start, start, None, None);
+        interp.on_position_change(id, TilePos::new(1, 0), start, start, None, None);
 
         let late = start + Duration::from_millis(TICK_MS * 2);
         let center = interp.visual_center(id, late, None, None).unwrap();
         assert!((center[0] - 1.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn chained_update_preserves_visual_position() {
+        let mut interp = EntityMovementInterp::default();
+        let id = EntityId(1);
+        let start = now();
+        interp.on_position_change(id, TilePos::new(0, 0), start, start, None, None);
+        interp.on_position_change(id, TilePos::new(1, 0), start, start, None, None);
+
+        let mid = start + Duration::from_millis(TICK_MS / 2);
+        let before = interp.visual_center(id, mid, None, None).unwrap();
+
+        let next_start = start + Duration::from_millis(TICK_MS);
+        interp.on_position_change(
+            id,
+            TilePos::new(2, 0),
+            next_start,
+            mid,
+            None,
+            None,
+        );
+
+        let after = interp.visual_center(id, mid, None, None).unwrap();
+        assert!((after[0] - before[0]).abs() < 0.01);
+        assert!((after[2] - before[2]).abs() < 0.01);
+    }
+
+    #[test]
+    fn server_clock_estimates_tick_start() {
+        let mut clock = ServerClock::default();
+        let t0 = now();
+        let start1 = clock.on_tick(10, t0);
+        assert_eq!(start1, t0 - Duration::from_millis(TICK_MS));
+
+        let t1 = t0 + Duration::from_millis(TICK_MS);
+        let start2 = clock.on_tick(11, t1);
+        assert_eq!(start2, t0);
     }
 }
