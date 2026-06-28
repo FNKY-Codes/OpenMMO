@@ -81,7 +81,7 @@ pub struct Renderer {
     scratch_transparent_outline_vertices: Vec<Vertex>,
     scratch_transparent_draws: Vec<TransparentDraw>,
     scratch_upload: Vec<Vertex>,
-    player_model: Option<GlbModel>,
+    player_model: Option<NpcModel>,
     npc_models: HashMap<NpcId, NpcModel>,
     scratch_model_draws: Vec<ModelDraw>,
 }
@@ -760,8 +760,16 @@ impl Renderer {
         for draw in &self.scratch_model_draws {
             match draw.target {
                 ModelTarget::Player => {
-                    if let Some(model) = self.player_model.as_ref() {
-                        model.draw_one(&mut render_pass, &self.gpu.queue, vp, draw);
+                    let Some(player_model) = self.player_model.as_mut() else {
+                        continue;
+                    };
+                    match player_model {
+                        NpcModel::Static(model) => {
+                            model.draw_one(&mut render_pass, &self.gpu.queue, vp, draw);
+                        }
+                        NpcModel::Skinned(model) => {
+                            model.draw_bind_pose(&mut render_pass, &self.gpu.queue, vp, draw);
+                        }
                     }
                 }
                 ModelTarget::Npc(npc_id) => {
