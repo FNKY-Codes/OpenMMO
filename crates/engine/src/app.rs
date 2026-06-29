@@ -590,9 +590,15 @@ impl EngineApp {
                 self.entities.push(entity);
             }
         }
-        self.entities.retain(|e| ids.contains(&e.entity_id));
-        self.movement_interp.prune(&ids);
-        self.npc_animations.retain(|id, _| ids.contains(id));
+        // Only drop entities in the current region that are missing from this delta.
+        // Entities in other regions (if any) are left untouched.
+        self.entities.retain(|e| {
+            e.region_id != region_id || ids.contains(&e.entity_id)
+        });
+        let live: std::collections::HashSet<_> =
+            self.entities.iter().map(|e| e.entity_id).collect();
+        self.movement_interp.prune(&live);
+        self.npc_animations.retain(|id, _| live.contains(id));
     }
 
     fn capture_death_corpse(&self, entity_id: openmmo_common::EntityId) -> Option<DeathCorpse> {
@@ -838,6 +844,8 @@ impl EngineApp {
                     self.combat_opponent,
                     self.local_player_position(),
                     self.region.as_ref(),
+                    &self.entities,
+                    self.local_player,
                 );
 
                 if let Some(opponent) = self.combat_opponent {

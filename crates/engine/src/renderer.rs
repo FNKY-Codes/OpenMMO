@@ -1052,7 +1052,7 @@ impl Renderer {
                     let tint = if is_local {
                         [1.0, 1.0, 1.0, 1.0]
                     } else {
-                        [0.95, 0.9, 0.75, 1.0]
+                        [0.75, 0.85, 1.0, 1.0]
                     };
                     model_draws.push(ModelDraw {
                         target: ModelTarget::Player,

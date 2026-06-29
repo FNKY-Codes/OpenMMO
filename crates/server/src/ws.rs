@@ -51,6 +51,31 @@ impl AppState {
         }
     }
 
+    /// Push a state update to every logged-in player in `region_id` except `skip`.
+    pub async fn notify_region(
+        &self,
+        region_id: openmmo_common::RegionId,
+        skip: PlayerId,
+        msg: &ServerMessage,
+    ) {
+        if let Ok(json) = encode_server(msg) {
+            let world = self.world.read().await;
+            let senders = self.player_senders.read().await;
+            for (pid, tx) in senders.iter() {
+                if *pid == skip {
+                    continue;
+                }
+                if world
+                    .players
+                    .get(pid)
+                    .is_some_and(|p| p.region_id == region_id)
+                {
+                    let _ = tx.send(json.clone());
+                }
+            }
+        }
+    }
+
     pub async fn register_connection(&self, tx: mpsc::UnboundedSender<String>) -> u64 {
         let mut next = self.next_conn_id.write().await;
         *next += 1;
@@ -252,6 +277,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 } else {
                     world.add_player(character_name.clone())
                 };
+                world.nudge_player_if_overlapping(pid);
                 if let Ok(redis_url) = std::env::var("REDIS_URL") {
                     let _ = crate::session::store_session(&redis_url, username, pid).await;
                 }
@@ -275,6 +301,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     }
                 }
                 assign_ledger_contract(&mut world, pid);
+                let region_id = world.players.get(&pid).map(|p| p.region_id);
+                let tick = world.tick;
                 let snapshot = snapshot_message(&world, Some(pid));
                 let journal = quest_journal(&world, pid);
                 let inv = world.players.get(&pid).map(inventory_update);
@@ -285,6 +313,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
 
                 if let Ok(json) = encode_server(&snapshot) {
                     let _ = conn_tx.send(json);
+                }
+                if let Some(region_id) = region_id {
+                    let join_delta = ServerMessage::StateDelta {
+                        tick,
+                        entities: {
+                            let world = state.world.read().await;
+                            world.entities_snapshot()
+                        },
+                    };
+                    state.notify_region(region_id, pid, &join_delta).await;
                 }
                 if let Some(inv) = inv {
                     if let Ok(json) = encode_server(&inv) {
