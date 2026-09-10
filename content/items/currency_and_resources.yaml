@@ -1,0 +1,163 @@
+# Currency and raw / refined resources.
+# Item id 1 is the currency used by shops and the trade board.
+
+- id: 1
+  name: Scrap
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 1
+  tier: scrap
+  examine: Twisted metal and old coin. The closest thing to money out here.
+
+# --- Timber -----------------------------------------------------------------
+- id: 2
+  name: Birch Timber
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 2
+  tier: wood
+  examine: Pale, light timber from a ruined birch.
+- id: 12
+  name: Oak Timber
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 6
+  tier: wood
+  examine: Dense oak. Takes a proper axe.
+- id: 13
+  name: Ironwood Timber
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 15
+  tier: wood
+  examine: Blackened ironwood. Nearly as hard as the metal it's named for.
+
+# --- Planks -----------------------------------------------------------------
+- id: 3
+  name: Birch Plank
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 8
+  tier: wood
+  examine: A rough plank. Good for handles and repairs.
+- id: 14
+  name: Oak Plank
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 20
+  tier: wood
+  examine: A sturdy oak plank.
+- id: 15
+  name: Ironwood Plank
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 45
+  tier: wood
+  examine: An ironwood plank. Rings when struck.
+
+# --- Ore --------------------------------------------------------------------
+- id: 4
+  name: Copper Ore
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 3
+  tier: stone
+  examine: Green-streaked rock. Smelts into bronze.
+- id: 16
+  name: Iron Ore
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 10
+  tier: stone
+  examine: Heavy, rust-coloured ore.
+- id: 17
+  name: Coal
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 12
+  tier: stone
+  examine: Burns hot. Needed to make steel.
+
+# --- Ingots -----------------------------------------------------------------
+- id: 5
+  name: Bronze Ingot
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 15
+  tier: bronze
+  examine: A dull bronze ingot.
+- id: 19
+  name: Iron Ingot
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 35
+  tier: iron
+  examine: A grey iron ingot.
+- id: 20
+  name: Steel Ingot
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 80
+  tier: steel
+  examine: A bright steel ingot. Iron and coal, done right.
+
+# --- Drops ------------------------------------------------------------------
+- id: 47
+  name: Wisp Essence
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 40
+  tier: misc
+  examine: It hums faintly and is cold to the touch. Traders pay well for it.
+- id: 49
+  name: Warlord's Trophy
+  stackable: false
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 2000
+  tier: misc
+  examine: The Ridge Warlord's iron crown. Proof you climbed the ridge and came back.

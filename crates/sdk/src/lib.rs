@@ -6,6 +6,7 @@ pub mod ids;
 pub mod manifest;
 pub mod math;
 pub mod skills;
+pub mod tiles;
 pub mod validation;
 
 pub use content::*;
@@ -13,6 +14,7 @@ pub use ids::*;
 pub use manifest::*;
 pub use math::*;
 pub use skills::*;
+pub use tiles::*;
 pub use validation::*;
 
 /// Asset manifest entry for sprites, models, or audio files.

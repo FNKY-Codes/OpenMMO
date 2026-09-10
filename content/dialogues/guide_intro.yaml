@@ -1,9 +1,0 @@
-id: npc_100
-text: Welcome, survivor. Verdant Reach rewards those who master the paths of the wasteland.
-options:
-  - label: Tell me about the paths.
-    next: npc_100_callings
-  - label: I'm ready to begin.
-    action:
-      type: start_quest
-      quest_id: 1

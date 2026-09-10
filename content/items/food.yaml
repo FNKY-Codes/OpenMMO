@@ -1,0 +1,77 @@
+# Fish and food. `heals` is HP restored on eat.
+
+- id: 6
+  name: Raw Minnow
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 4
+  tier: food
+  examine: A small, silvery fish. Cook it first.
+- id: 21
+  name: Raw Trout
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 10
+  tier: food
+  examine: A fat river trout.
+- id: 22
+  name: Raw Pike
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 22
+  tier: food
+  examine: A pike from the deep pools. Mind the teeth.
+
+- id: 7
+  name: Cooked Minnow
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 6
+  tier: food
+  heals: 3
+  examine: Crisp and a bit bony. Heals 3.
+- id: 23
+  name: Cooked Trout
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 16
+  tier: food
+  heals: 7
+  examine: A proper meal. Heals 7.
+- id: 24
+  name: Cooked Pike
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 35
+  tier: food
+  heals: 12
+  examine: Enough pike to keep you standing. Heals 12.
+- id: 51
+  name: Cave Mushroom
+  stackable: true
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 3
+  tier: food
+  heals: 2
+  examine: Glows very slightly. Probably fine. Heals 2.

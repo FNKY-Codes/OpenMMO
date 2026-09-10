@@ -57,6 +57,8 @@ pub struct EngineApp {
     pub quest_text: Vec<(String, String)>,
     pub combat_opponent: Option<openmmo_common::EntityId>,
     pub net_tx: Option<Sender<NetCommand>>,
+    /// Dev/test hook: submit the pre-filled login form on the first frame.
+    pub auto_connect: bool,
     pub net_rx: Option<Receiver<ServerMessage>>,
     pointer_over_ui: bool,
     pub player_model_path: Option<std::path::PathBuf>,
@@ -86,6 +88,7 @@ impl Default for EngineApp {
             quest_text: Vec::new(),
             combat_opponent: None,
             net_tx: None,
+            auto_connect: false,
             net_rx: None,
             pointer_over_ui: false,
             player_model_path: resolve_player_model_path(),
@@ -825,6 +828,10 @@ impl EngineApp {
         let full_output = egui_ctx.run(raw_input, |ctx| {
             if !self.ui.connected {
                 connect = self.ui.draw_login(ctx);
+                if self.auto_connect {
+                    self.auto_connect = false;
+                    connect = true;
+                }
             } else {
                 ui_action = self.ui.draw_hud(
                     ctx,

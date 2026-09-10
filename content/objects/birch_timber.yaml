@@ -1,8 +1,0 @@
-id: 1
-name: Birch Timber
-harvest_tag: timber
-scavenging_level: 1
-scavenging_xp: 25
-harvest_item: 2
-scavenging_ticks: 3
-depletes: true

@@ -1,0 +1,74 @@
+# Gathering tools. `tool_tag` is what a resource node checks for.
+
+- id: 9
+  name: Training Axe
+  stackable: false
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: axe
+  alchemy_value: 20
+  tier: wood
+  examine: A hatchet with a taped handle. It cuts, eventually.
+- id: 25
+  name: Bronze Axe
+  stackable: false
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: axe
+  alchemy_value: 60
+  tier: bronze
+  examine: A bronze-headed felling axe.
+- id: 26
+  name: Iron Axe
+  stackable: false
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: axe
+  alchemy_value: 150
+  tier: iron
+  examine: An iron axe. Bites deep.
+
+- id: 10
+  name: Stone Pick
+  stackable: false
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: pick
+  alchemy_value: 20
+  tier: stone
+  examine: A lump of flint lashed to a stick.
+- id: 27
+  name: Bronze Pick
+  stackable: false
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: pick
+  alchemy_value: 60
+  tier: bronze
+  examine: A bronze pickaxe.
+- id: 28
+  name: Iron Pick
+  stackable: false
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: pick
+  alchemy_value: 150
+  tier: iron
+  examine: An iron pickaxe. Cracks coal seams.
+
+- id: 11
+  name: Fishing Rod
+  stackable: false
+  equip_slot: null
+  prowess_bonus: 0
+  fortitude_bonus: 0
+  tool_tag: rod
+  alchemy_value: 15
+  tier: wood
+  examine: A rod, a line, and some optimism.

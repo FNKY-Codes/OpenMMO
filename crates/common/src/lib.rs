@@ -9,6 +9,7 @@ pub use content::*;
 pub use ids::*;
 pub use math::*;
 pub use npc::*;
+pub use openmmo_sdk::tiles::{LayoutError, LegendEntry, LegendPortal, TileKind, TransitionKind};
 pub use openmmo_sdk::{
     default_region_id, lint_regions, load_content, load_manifest, resolve_content_path,
     resolve_pack_root, validate_content, AssetEntry, AssetKind, AssetManifest, Calling,

@@ -2497,8 +2497,12 @@ mod routing_tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
         let content = openmmo_common::load_content(&path).expect("content dir");
         let mut world = GameWorld::new(content);
+        let region_id = world.content.regions.first().expect("region").id;
+        // An NPC standing directly between the player and the target.
+        world.spawn_npc(openmmo_common::NpcId(4), TilePos::new(6, 5), region_id);
         let pid = PlayerId(Uuid::from_u128(1));
         let mut player = test_player(1);
+        player.region_id = region_id;
         player.position = TilePos::new(5, 5);
         world.players.insert(pid, player);
 
@@ -2682,21 +2686,20 @@ mod routing_tests {
         let mut world = GameWorld::new(content.clone());
         world.quests.load(&content);
 
+        // The Wasteland Guide (100) stands in the open town square.
+        let region_id = world.content.regions.first().expect("region").id;
         let (entity_id, npc_pos) = world
             .npcs
             .iter()
-            .find_map(|(eid, n)| {
-                world
-                    .content
-                    .npc(n.npc_id)
-                    .filter(|d| d.aggro_range == 0)
-                    .map(|_| (*eid, n.position))
-            })
-            .expect("friendly npc");
+            .find(|(_, n)| n.npc_id == openmmo_common::NpcId(100) && n.region_id == region_id)
+            .map(|(eid, n)| (*eid, n.position))
+            .expect("wasteland guide");
 
         let pid = PlayerId(Uuid::from_u128(1));
         let mut player = test_player(1);
-        player.position = TilePos::new(npc_pos.x, npc_pos.y + 8);
+        player.region_id = region_id;
+        player.position =
+            world.find_player_spawn(region_id, TilePos::new(npc_pos.x, npc_pos.y + 8));
         player.last_position = player.position;
         world.players.insert(pid, player);
 
@@ -2743,23 +2746,23 @@ mod routing_tests {
         let content = openmmo_common::load_content(&path).expect("content dir");
         let mut world = GameWorld::new(content);
 
+        // A Ridge Bandit in the open bandit camps (dirt, no obstacles), picked
+        // deterministically; displaced onto a walkable tile a few steps away.
+        let region_id = world.content.regions.first().expect("region").id;
         let entity_id = world
             .npcs
             .iter()
-            .find(|(_, n)| {
-                world
-                    .content
-                    .npc(n.npc_id)
-                    .map(|d| d.aggro_range > 0)
-                    .unwrap_or(false)
-            })
+            .filter(|(_, n)| n.region_id == region_id && n.npc_id == openmmo_common::NpcId(2))
+            .min_by_key(|(eid, _)| eid.0)
             .map(|(eid, _)| *eid)
-            .expect("hostile npc");
+            .expect("ridge bandit");
 
         let home = world.npcs.get(&entity_id).unwrap().home_position;
+        let away = world.find_player_spawn(region_id, TilePos::new(home.x + 4, home.y + 4));
+        assert!(away != home, "displacement tile should differ from home");
         {
             let npc = world.npcs.get_mut(&entity_id).unwrap();
-            npc.position = TilePos::new(home.x + 5, home.y + 5);
+            npc.position = away;
             npc.aggro_target = Some(PlayerId(Uuid::from_u128(99)));
         }
 

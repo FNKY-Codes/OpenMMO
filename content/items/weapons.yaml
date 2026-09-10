@@ -1,0 +1,50 @@
+# Weapons. `equip_level` is the Combat level required.
+
+- id: 31
+  name: Scrap Club
+  stackable: false
+  equip_slot: weapon
+  prowess_bonus: 2
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 10
+  attack_ticks: 4
+  equip_level: 1
+  tier: scrap
+  examine: A length of rebar wrapped in tape. Better than fists.
+- id: 8
+  name: Bronze Blade
+  stackable: false
+  equip_slot: weapon
+  prowess_bonus: 5
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 40
+  attack_ticks: 4
+  equip_level: 1
+  tier: bronze
+  examine: A short bronze blade. Holds an edge for a while.
+- id: 29
+  name: Iron Blade
+  stackable: false
+  equip_slot: weapon
+  prowess_bonus: 9
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 200
+  attack_ticks: 4
+  equip_level: 10
+  tier: iron
+  examine: An iron sword. Requires Combat 10.
+- id: 30
+  name: Steel Blade
+  stackable: false
+  equip_slot: weapon
+  prowess_bonus: 14
+  fortitude_bonus: 0
+  tool_tag: null
+  alchemy_value: 600
+  attack_ticks: 4
+  equip_level: 20
+  tier: steel
+  examine: A steel sword, bright as the day it was forged. Requires Combat 20.

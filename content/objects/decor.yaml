@@ -1,0 +1,142 @@
+# Scenery. Not harvestable, but examinable.
+
+- id: 16
+  name: Lamp Post
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: lamp
+  examine: Still lit. Nobody knows what feeds it.
+- id: 17
+  name: Crate
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: crate
+  examine: Empty. Everyone's checked.
+- id: 18
+  name: Barrel
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: barrel
+  examine: Rainwater, mostly.
+- id: 19
+  name: Fence
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: fence
+  examine: Corrugated sheet and wire.
+- id: 20
+  name: Dead Tree
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: dead_tree
+  examine: Long dead. Nothing worth cutting.
+- id: 21
+  name: Boulder
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: boulder
+  examine: A lump of the old world.
+- id: 22
+  name: Signpost
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: sign
+  examine: "Hand-painted: BIRCH WOODS west. COPPER RIDGE north. POOLS south. COAST east."
+- id: 23
+  name: Rubble
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: rubble
+  examine: Bricks and rebar.
+- id: 25
+  name: Statue
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: statue
+  examine: A figure with its face worn away. Someone leaves flowers.
+- id: 26
+  name: Well
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: well
+  examine: The town's water. Guarded more carefully than the bank.
+- id: 27
+  name: Tent
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: tent
+  examine: A bandit's tent. Smells of smoke and worse.
+- id: 28
+  name: Crystal Growth
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: crystal
+  examine: It hums in time with the wisps.
+- id: 29
+  name: Stump
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: stump
+  examine: Somebody got here first.
+- id: 30
+  name: Campfire
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  model: campfire
+  examine: Still warm.

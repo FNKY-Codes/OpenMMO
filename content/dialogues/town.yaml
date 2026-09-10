@@ -1,0 +1,61 @@
+# Dialogue trees. An NPC's entry node is `npc_<npc id>`.
+
+# --- Wasteland Guide (100) --------------------------------------------------
+- id: npc_100
+  text: Welcome, survivor. Verdant Reach is the last safe ground for a day's walk. Learn it before you leave it.
+  options:
+    - label: What should I do first?
+      next: npc_100_first
+    - label: Where can I find things?
+      next: npc_100_map
+    - label: I'm ready to begin.
+      action: { type: start_quest, quest_id: 1 }
+    - label: Just passing through.
+- id: npc_100_first
+  text: Take your axe to the birch woods west of town. Cut timber, saw it into planks at the workbench, sell what you don't need to Marla. When you've got Scrap, see Grist about a real blade.
+  options:
+    - label: And after that?
+      next: npc_100_after
+    - label: Back.
+      next: npc_100
+- id: npc_100_after
+  text: Copper Ridge is north — mine it, smelt it at the furnace, hammer it on the anvil. The pools south have fish; cook them, they'll keep you alive. Rats and tigers roam the outskirts. Bandits hold the far east. The cave in the north cliffs and the ruins south-west are for when you're stronger.
+  options:
+    - label: Back.
+      next: npc_100
+- id: npc_100_map
+  text: West, the birch woods. North, Copper Ridge and the cave mouth. South, the still pools and the old ruins. East, the road to the Shattered Coast. Stairs up the ridge are east of the copper ridge — bandits camp on the summit.
+  options:
+    - label: Back.
+      next: npc_100
+
+# --- Marla the Trader (101) -------------------------------------------------
+- id: npc_101
+  text: Tools, food, and a fair price for whatever you drag in. What'll it be?
+  options:
+    - label: Let me see what you have.
+      action: { type: open_shop, shop_id: general_store }
+    - label: Just looking.
+
+# --- Grist the Smith (102) --------------------------------------------------
+- id: npc_102
+  text: Bronze for sale. Iron and steel you'll have to make yourself — I'll show you the anvil.
+  options:
+    - label: Show me the bronze.
+      action: { type: open_shop, shop_id: smithy }
+    - label: How do I smith?
+      next: npc_102_howto
+    - label: Another time.
+- id: npc_102_howto
+  text: Ore into the furnace makes an ingot. Ingots on the anvil make gear. Bronze is copper alone. Iron needs iron ore from the cave. Steel needs iron and coal together, and a steady hand.
+  options:
+    - label: I'll buy bronze for now.
+      action: { type: open_shop, shop_id: smithy }
+    - label: Back.
+      next: npc_102
+
+# --- Old Wen (103) ----------------------------------------------------------
+- id: npc_103
+  text: Minnows in the still pools, trout in the river on the coast, pike in the deep pools if you've the nerve. Cook them at a fire before you eat them. Marla sells rods.
+  options:
+    - label: Thanks.

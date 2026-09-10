@@ -437,20 +437,21 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     .get(&pid)
                     .is_some_and(|p| p.inventory.slots.iter().all(|s| s.is_none()))
                 {
+                    // Fresh character: hand out the content pack's starter kit.
                     let starter_items: Vec<_> = world
                         .content
-                        .items
+                        .starter_kit
                         .iter()
-                        .filter(|item| {
-                            item.name.contains("Bronze")
-                                || item.name.contains("Log")
-                                || item.name.contains("Timber")
+                        .filter_map(|entry| {
+                            world
+                                .content
+                                .item(entry.item_id)
+                                .map(|item| (item.id, entry.quantity, item.stackable))
                         })
-                        .map(|item| (item.id, item.stackable))
                         .collect();
                     if let Some(player) = world.players.get_mut(&pid) {
-                        for (id, stackable) in starter_items {
-                            let _ = player.inventory.add_item(id, 5, stackable);
+                        for (id, quantity, stackable) in starter_items {
+                            let _ = player.inventory.add_item(id, quantity, stackable);
                         }
                     }
                 }

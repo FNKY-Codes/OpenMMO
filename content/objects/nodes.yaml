@@ -1,0 +1,116 @@
+# Harvestable resource nodes. Level is the Scavenging level required.
+
+# --- Timber (needs an axe) --------------------------------------------------
+- id: 1
+  name: Birch Timber
+  harvest_tag: timber
+  scavenging_level: 1
+  scavenging_xp: 25
+  harvest_item: 2
+  scavenging_ticks: 3
+  depletes: true
+  respawn_ticks: 12
+  model: tree
+  examine: A pale birch, half dead. Easy to fell.
+- id: 4
+  name: Oak
+  harvest_tag: timber
+  scavenging_level: 15
+  scavenging_xp: 60
+  harvest_item: 12
+  scavenging_ticks: 4
+  depletes: true
+  respawn_ticks: 20
+  model: oak
+  examine: A broad old oak. Requires Scavenging 15.
+- id: 5
+  name: Ironwood
+  harvest_tag: timber
+  scavenging_level: 30
+  scavenging_xp: 120
+  harvest_item: 13
+  scavenging_ticks: 5
+  depletes: true
+  respawn_ticks: 30
+  model: dead_tree
+  examine: A blackened ironwood. Requires Scavenging 30.
+
+# --- Ore (needs a pick) -----------------------------------------------------
+- id: 2
+  name: Copper Vein
+  harvest_tag: ore
+  scavenging_level: 1
+  scavenging_xp: 30
+  harvest_item: 4
+  scavenging_ticks: 4
+  depletes: true
+  respawn_ticks: 15
+  model: ore_vein
+  examine: Green streaks in the rock.
+- id: 6
+  name: Iron Vein
+  harvest_tag: ore
+  scavenging_level: 15
+  scavenging_xp: 70
+  harvest_item: 16
+  scavenging_ticks: 5
+  depletes: true
+  respawn_ticks: 25
+  model: ore_vein
+  examine: Rust-red ore. Requires Scavenging 15.
+- id: 7
+  name: Coal Seam
+  harvest_tag: ore
+  scavenging_level: 20
+  scavenging_xp: 85
+  harvest_item: 17
+  scavenging_ticks: 5
+  depletes: true
+  respawn_ticks: 30
+  model: ore_vein
+  examine: A black seam. Requires Scavenging 20.
+
+# --- Fishing (needs a rod) --------------------------------------------------
+- id: 3
+  name: Still Pool
+  harvest_tag: water
+  scavenging_level: 1
+  scavenging_xp: 20
+  harvest_item: 6
+  scavenging_ticks: 3
+  depletes: false
+  model: pool
+  examine: Minnows flicker under the surface.
+- id: 8
+  name: River Shallows
+  harvest_tag: water
+  scavenging_level: 15
+  scavenging_xp: 55
+  harvest_item: 21
+  scavenging_ticks: 4
+  depletes: false
+  model: pool
+  examine: Trout hold in the current here. Requires Scavenging 15.
+- id: 9
+  name: Deep Pool
+  harvest_tag: water
+  scavenging_level: 30
+  scavenging_xp: 110
+  harvest_item: 22
+  scavenging_ticks: 5
+  depletes: false
+  model: pool
+  examine: Something big moves down there. Requires Scavenging 30.
+
+# --- Flora ------------------------------------------------------------------
+- id: 24
+  name: Mushroom Cluster
+  harvest_tag: flora
+  scavenging_level: 5
+  scavenging_xp: 20
+  harvest_item: 51
+  scavenging_ticks: 2
+  depletes: true
+  respawn_ticks: 20
+  model: mushroom
+  examine: Faintly glowing cave mushrooms. Requires Scavenging 5.

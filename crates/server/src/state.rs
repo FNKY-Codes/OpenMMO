@@ -75,8 +75,8 @@ impl GameWorld {
             for y in 0..region.height {
                 for x in 0..region.width {
                     let idx = (y * region.width + x) as usize;
-                    let tile = region.tiles.get(idx).copied().unwrap_or(1);
-                    if tile != 255 {
+                    let tile = region.tiles.get(idx).copied().unwrap_or(255);
+                    if openmmo_common::TileKind::byte_walkable(tile) {
                         let pos = TilePos::new(x as i32, y as i32);
                         region_tiles.insert(pos);
                         self.walkable.insert(pos);
@@ -497,6 +497,7 @@ mod tests {
             objects: vec![],
             npcs: vec![],
             transitions: vec![],
+            ..Default::default()
         }];
         let mut world = GameWorld::new(pack);
         let first = world.add_player("Alice".into());
@@ -524,7 +525,9 @@ mod tests {
                     position: TilePos::new(4, 2),
                     target_region: RegionId(2),
                     target_spawn: TilePos::new(1, 1),
+                    ..Default::default()
                 }],
+                ..Default::default()
             },
             RegionDef {
                 id: RegionId(2),
@@ -536,6 +539,7 @@ mod tests {
                 objects: vec![],
                 npcs: vec![],
                 transitions: vec![],
+                ..Default::default()
             },
         ];
         let mut world = GameWorld::new(pack);
@@ -564,6 +568,7 @@ mod tests {
                 objects: vec![],
                 npcs: vec![],
                 transitions: vec![],
+                ..Default::default()
             },
             RegionDef {
                 id: RegionId(2),
@@ -578,7 +583,9 @@ mod tests {
                     position: TilePos::new(0, 2),
                     target_region: RegionId(1),
                     target_spawn: TilePos::new(4, 2),
+                    ..Default::default()
                 }],
+                ..Default::default()
             },
         ];
         let mut world = GameWorld::new(pack);

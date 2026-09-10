@@ -1,0 +1,176 @@
+# Armour sets. fortitude_bonus is the defensive stat.
+
+# --- Scrap (starter) --------------------------------------------------------
+- id: 44
+  name: Scrap Helm
+  stackable: false
+  equip_slot: head
+  prowess_bonus: 0
+  fortitude_bonus: 1
+  tool_tag: null
+  alchemy_value: 8
+  equip_level: 1
+  tier: scrap
+  examine: A dented pot with a chin strap.
+- id: 45
+  name: Scrap Vest
+  stackable: false
+  equip_slot: body
+  prowess_bonus: 0
+  fortitude_bonus: 2
+  tool_tag: null
+  alchemy_value: 15
+  equip_level: 1
+  tier: scrap
+  examine: Road signs, riveted together.
+
+# --- Bronze -----------------------------------------------------------------
+- id: 32
+  name: Bronze Helm
+  stackable: false
+  equip_slot: head
+  prowess_bonus: 0
+  fortitude_bonus: 2
+  tool_tag: null
+  alchemy_value: 30
+  equip_level: 1
+  tier: bronze
+  examine: A bronze helm.
+- id: 33
+  name: Bronze Plate
+  stackable: false
+  equip_slot: body
+  prowess_bonus: 0
+  fortitude_bonus: 5
+  tool_tag: null
+  alchemy_value: 80
+  equip_level: 1
+  tier: bronze
+  examine: A bronze breastplate.
+- id: 34
+  name: Bronze Legs
+  stackable: false
+  equip_slot: legs
+  prowess_bonus: 0
+  fortitude_bonus: 3
+  tool_tag: null
+  alchemy_value: 50
+  equip_level: 1
+  tier: bronze
+  examine: Bronze leg plates.
+- id: 35
+  name: Bronze Shield
+  stackable: false
+  equip_slot: shield
+  prowess_bonus: 0
+  fortitude_bonus: 3
+  tool_tag: null
+  alchemy_value: 45
+  equip_level: 1
+  tier: bronze
+  examine: A round bronze shield.
+
+# --- Iron (Combat 10) -------------------------------------------------------
+- id: 36
+  name: Iron Helm
+  stackable: false
+  equip_slot: head
+  prowess_bonus: 0
+  fortitude_bonus: 4
+  tool_tag: null
+  alchemy_value: 150
+  equip_level: 10
+  tier: iron
+  examine: An iron helm. Requires Combat 10.
+- id: 37
+  name: Iron Plate
+  stackable: false
+  equip_slot: body
+  prowess_bonus: 0
+  fortitude_bonus: 9
+  tool_tag: null
+  alchemy_value: 400
+  equip_level: 10
+  tier: iron
+  examine: An iron breastplate. Requires Combat 10.
+- id: 38
+  name: Iron Legs
+  stackable: false
+  equip_slot: legs
+  prowess_bonus: 0
+  fortitude_bonus: 6
+  tool_tag: null
+  alchemy_value: 250
+  equip_level: 10
+  tier: iron
+  examine: Iron leg plates. Requires Combat 10.
+- id: 39
+  name: Iron Shield
+  stackable: false
+  equip_slot: shield
+  prowess_bonus: 0
+  fortitude_bonus: 5
+  tool_tag: null
+  alchemy_value: 220
+  equip_level: 10
+  tier: iron
+  examine: A kite shield of iron. Requires Combat 10.
+
+# --- Steel (Combat 20) ------------------------------------------------------
+- id: 40
+  name: Steel Helm
+  stackable: false
+  equip_slot: head
+  prowess_bonus: 0
+  fortitude_bonus: 6
+  tool_tag: null
+  alchemy_value: 450
+  equip_level: 20
+  tier: steel
+  examine: A steel helm. Requires Combat 20.
+- id: 41
+  name: Steel Plate
+  stackable: false
+  equip_slot: body
+  prowess_bonus: 0
+  fortitude_bonus: 13
+  tool_tag: null
+  alchemy_value: 1200
+  equip_level: 20
+  tier: steel
+  examine: A steel breastplate. Requires Combat 20.
+- id: 42
+  name: Steel Legs
+  stackable: false
+  equip_slot: legs
+  prowess_bonus: 0
+  fortitude_bonus: 9
+  tool_tag: null
+  alchemy_value: 750
+  equip_level: 20
+  tier: steel
+  examine: Steel leg plates. Requires Combat 20.
+- id: 43
+  name: Steel Shield
+  stackable: false
+  equip_slot: shield
+  prowess_bonus: 0
+  fortitude_bonus: 8
+  tool_tag: null
+  alchemy_value: 650
+  equip_level: 20
+  tier: steel
+  examine: A steel kite shield. Requires Combat 20.
+
+# --- Rare drops -------------------------------------------------------------
+- id: 48
+  name: Bandit Mask
+  stackable: false
+  equip_slot: head
+  prowess_bonus: 1
+  fortitude_bonus: 2
+  tool_tag: null
+  alchemy_value: 120
+  equip_level: 5
+  tier: leather
+  examine: A leather mask taken from a Ridge Bandit. Smells of woodsmoke.

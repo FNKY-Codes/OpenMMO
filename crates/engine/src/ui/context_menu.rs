@@ -217,6 +217,7 @@ mod tests {
                 tool_tag: None,
                 alchemy_value: 0,
                 attack_ticks: 4,
+                ..Default::default()
             }],
             objects: vec![openmmo_common::ObjectDef {
                 id: ObjectId(1),
@@ -227,6 +228,7 @@ mod tests {
                 harvest_item: Some(ItemId(2)),
                 scavenging_ticks: 1,
                 depletes: true,
+                ..Default::default()
             }],
             ..Default::default()
         }
@@ -243,6 +245,7 @@ mod tests {
             objects: vec![],
             npcs: vec![],
             transitions: vec![],
+            ..Default::default()
         }
     }
 
