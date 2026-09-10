@@ -1,6 +1,6 @@
 # OpenMMO Roadmap
 
-**Last reviewed:** 2026-06-27
+**Last reviewed:** 2026-09-10
 
 ## Vision & principles
 
@@ -104,13 +104,17 @@ Required before public self-hosting or multi-shard deployment.
 
 | ID | Item | Status | Key files |
 |----|------|--------|-----------|
-| B1 | Postgres default in release profile | Open | `crates/server/Cargo.toml`, `docs/self-hosting.md` |
-| B2 | Redis sessions in production path | Open | `crates/server/src/session.rs`, `deploy/docker-compose.yml` |
+| B1 | Postgres in production (Dockerfile builds with `postgres,redis`) | **Complete** (2026-09-10) | `Dockerfile`, `crates/server/src/persistence.rs` |
+| B2 | Redis sessions in production path | **Complete** (2026-09-10) | `crates/server/src/session.rs`, Railway |
 | B3 | WebSocket integration tests | Open | `.github/workflows/ci.yml` |
-| B4 | Audit log persistence | Open | `deploy/migrations/`, `crates/server/src/persistence.rs` |
-| B5 | CI release workflow | Open | `.github/workflows/` |
+| B4 | Audit log persistence | **Complete** — pooled writes to `audit_log` | `crates/server/src/persistence.rs` |
+| B5 | CI release workflow (Windows client zip on `v*` tags) | **Complete** (2026-09-10) | `.github/workflows/release.yml` |
+| B6 | Account security: Argon2id passwords, account↔character binding, duplicate-login eviction, autosave + graceful shutdown | **Complete** (2026-09-10) | `persistence.rs`, `ws.rs` |
+| B7 | Connection/chat rate limiting, working ban list | Open | `crates/server/src/anticheat.rs`, `ws.rs` |
+| B8 | Clippy clean under `-D warnings` (CI currently red on ~50 pre-existing lints) | Open | workspace |
+| B9 | Flaky routing tests (`attack_out_of_range_walks_to_enemy_then_combats`, `scavenge_out_of_range_walks_to_object_then_scavenges`) | Open | `crates/server/src/tick.rs` |
 
-**Depends on:** B3 after A4; B4 after B1; B5 after B1 + B2
+**Depends on:** B3 after A4; B7 before open signups
 
 ---
 
