@@ -1,14 +1,23 @@
+//! In-game UI (egui), laid out like classic RuneScape: minimap and HP orb
+//! top-right, icon-tabbed side panel bottom-right, chat bottom-left, hover
+//! text top-left, and windows for the bank, shops, stations and dialogue.
+
+pub mod chat;
 mod context_menu;
-mod side_panel;
+pub mod grid;
+pub mod icons;
+pub mod minimap;
+pub mod panels;
 mod theme;
 mod widgets;
+pub mod windows;
 
 use std::time::Instant;
 
-use egui::{Context, RichText};
+use egui::{Context, RichText, Vec2};
 use openmmo_common::{
     ContentPack, DialogueNode, EntityId, EntityKind, Equipment, Inventory, ItemId, RegionDef,
-    SkillBook, WorldEntity,
+    SkillBook, StationTag, TilePos, WorldEntity,
 };
 use openmmo_protocol::{ChatChannel, LedgerContract};
 
@@ -16,78 +25,87 @@ use crate::entity_bounds;
 use crate::math::{self, Vec3};
 use crate::movement_interp::EntityMovementInterp;
 
-pub use context_menu::{build_context_menu, to_client_message, ContextMenu, ContextMenuAction};
+pub use chat::{ChatKind, ChatOutput, ChatState};
+pub use context_menu::{
+    build_context_menu, examine_text, harvest_verb, primary_action, to_client_message, ContextMenu,
+    ContextMenuAction,
+};
+pub use panels::PanelTab;
 pub use theme::setup_theme;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SidePanelTab {
-    Inventory,
-    Bank,
-    Skills,
-    Quests,
-    Market,
-    Friends,
-}
+pub use widgets::entity_display_name;
 
 pub struct GameUi {
-    pub active_tab: Option<SidePanelTab>,
-    pub show_minimap: bool,
-    pub chat_input: String,
-    pub chat_channel: ChatChannel,
-    pub chat_log: Vec<(String, String)>,
-    pub combat_log: Vec<String>,
-    pub xp_drops: Vec<(String, u64, Instant)>,
+    // Login
     pub connection_url: String,
     pub username: String,
     pub character_name: String,
     pub password: String,
     pub connected: bool,
     pub status: String,
-    pub active_dialogue: Option<(openmmo_common::EntityId, DialogueNode)>,
+
+    // Layout / HUD
+    pub active_tab: PanelTab,
+    pub show_minimap: bool,
+    pub show_hover_text: bool,
+    pub minimap_cache: Option<minimap::MinimapCache>,
+    pub chat: ChatState,
+    pub xp_drops: Vec<(String, u64, Instant)>,
+    pub hover_text: Option<String>,
+    pub context_menu: Option<ContextMenu>,
+
+    // Windows
+    pub active_dialogue: Option<(EntityId, DialogueNode)>,
     pub open_shop: Option<(String, Vec<openmmo_common::ShopStock>)>,
-    pub bank_mode_deposit: bool,
+    pub open_station: Option<(StationTag, TilePos)>,
+    /// Recipe being made repeatedly and how many are left to start.
+    pub craft_queue: Option<(String, u32)>,
+
+    // Market
     pub market_offers: Vec<openmmo_common::MarketOffer>,
     pub market_item_id: ItemId,
     pub market_selected_inv_slot: Option<usize>,
     pub market_qty: String,
     pub market_price: String,
     pub market_is_buy: bool,
+
+    // Social
     pub friends: Vec<String>,
     pub online_players: Vec<String>,
     pub friend_add_input: String,
-    pub pm_to: String,
-    pub pm_message: String,
     pub trade_partner: Option<String>,
     pub trade_their_items: Vec<openmmo_common::InventorySlot>,
     pub trade_your_items: Vec<openmmo_common::InventorySlot>,
     pub trade_pending_items: Vec<openmmo_common::InventorySlot>,
     pub trade_partner_name: String,
+
+    // Progress
     pub ledger_rank: u32,
     pub ledger_points: u32,
     pub ledger_contract: Option<LedgerContract>,
-    pub context_menu: Option<ContextMenu>,
     pub collection_log: Vec<(String, u32)>,
 }
 
 impl Default for GameUi {
     fn default() -> Self {
         Self {
-            active_tab: Some(SidePanelTab::Inventory),
-            show_minimap: true,
-            chat_input: String::new(),
-            chat_channel: ChatChannel::Local,
-            chat_log: Vec::new(),
-            combat_log: Vec::new(),
-            xp_drops: Vec::new(),
             connection_url: "ws://127.0.0.1:8080/ws".to_string(),
             username: "player".to_string(),
             character_name: "Adventurer".to_string(),
             password: String::new(),
             connected: false,
             status: "Disconnected".to_string(),
+            active_tab: PanelTab::Inventory,
+            show_minimap: true,
+            show_hover_text: true,
+            minimap_cache: None,
+            chat: ChatState::default(),
+            xp_drops: Vec::new(),
+            hover_text: None,
+            context_menu: None,
             active_dialogue: None,
             open_shop: None,
-            bank_mode_deposit: true,
+            open_station: None,
+            craft_queue: None,
             market_offers: Vec::new(),
             market_item_id: ItemId(2),
             market_selected_inv_slot: None,
@@ -97,8 +115,6 @@ impl Default for GameUi {
             friends: Vec::new(),
             online_players: Vec::new(),
             friend_add_input: String::new(),
-            pm_to: String::new(),
-            pm_message: String::new(),
             trade_partner: None,
             trade_their_items: Vec::new(),
             trade_your_items: Vec::new(),
@@ -107,8 +123,35 @@ impl Default for GameUi {
             ledger_rank: 0,
             ledger_points: 0,
             ledger_contract: None,
-            context_menu: None,
             collection_log: Vec::new(),
+        }
+    }
+}
+
+/// Text shown top-left for whatever is under the cursor, RuneScape style.
+pub fn hover_label(
+    content: &ContentPack,
+    entities: &[WorldEntity],
+    hover: Option<crate::renderer::HoverTarget>,
+) -> Option<String> {
+    use crate::renderer::HoverTarget;
+    match hover? {
+        HoverTarget::Tile(_) => Some("Walk here".into()),
+        HoverTarget::Entity(id) => {
+            let entity = entities.iter().find(|e| e.entity_id == id)?;
+            let (name, subtitle) = widgets::entity_display_name(content, entity);
+            let verb = primary_action(content, entity).map(|(v, _)| v);
+            let level = match &entity.kind {
+                EntityKind::Npc { .. } | EntityKind::Boss { .. } => subtitle
+                    .filter(|s| s.starts_with("Level"))
+                    .map(|s| format!(" ({})", s.to_lowercase()))
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
+            Some(match verb {
+                Some(v) => format!("{v} {name}{level}"),
+                None => format!("Examine {name}{level}"),
+            })
         }
     }
 }
@@ -116,30 +159,42 @@ impl Default for GameUi {
 impl GameUi {
     pub fn draw_login(&mut self, ctx: &Context) -> bool {
         let mut connect = false;
-        egui::Window::new("OpenMMO Login")
+        egui::Window::new(RichText::new("OpenMMO").color(theme::ACCENT).size(22.0))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(RichText::new("OpenMMO").size(24.0));
+                ui.set_width(300.0);
+                ui.label(RichText::new("Verdant Reach awaits.").color(theme::TEXT_MUTED));
                 ui.separator();
-                ui.label("Server URL");
+                ui.label("Server");
                 ui.text_edit_singleline(&mut self.connection_url);
                 ui.label("Username");
                 ui.text_edit_singleline(&mut self.username);
-                ui.label("Character Name");
+                ui.label("Character name");
                 ui.text_edit_singleline(&mut self.character_name);
                 ui.label("Password");
-                ui.add(egui::TextEdit::singleline(&mut self.password).password(true));
+                let pw = ui.add(egui::TextEdit::singleline(&mut self.password).password(true));
                 ui.separator();
-                ui.label(&self.status);
-                if ui.button("Connect").clicked() {
+                ui.label(RichText::new(&self.status).color(theme::TEXT_MUTED).small());
+                ui.label(
+                    RichText::new("New username? The account is created with this password.")
+                        .color(theme::TEXT_MUTED)
+                        .small(),
+                );
+                let enter = pw.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if ui
+                    .add(egui::Button::new("Connect").min_size(Vec2::new(120.0, 26.0)))
+                    .clicked()
+                    || enter
+                {
                     connect = true;
                 }
             });
         connect
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_hud(
         &mut self,
         ctx: &Context,
@@ -151,197 +206,127 @@ impl GameUi {
         hp: u32,
         max_hp: u32,
         quest_text: &[(String, String)],
-        combat_opponent: Option<openmmo_common::EntityId>,
-        player_tile: Option<openmmo_common::TilePos>,
+        combat_opponent: Option<EntityId>,
+        player_tile: Option<TilePos>,
         region: Option<&RegionDef>,
         entities: &[WorldEntity],
         local_player: Option<openmmo_common::PlayerId>,
     ) -> UiAction {
         let mut action = UiAction::None;
-
         let now = Instant::now();
-        self.xp_drops
-            .retain(|(_, _, at)| now.duration_since(*at).as_secs_f32() < 1.5);
 
-        for (skill, amount, _) in &self.xp_drops {
-            egui::Area::new(egui::Id::new(format!("xp_{skill}_{amount}")))
-                .anchor(egui::Align2::CENTER_TOP, [0.0, 40.0])
+        // Hover text, top-left.
+        if self.show_hover_text {
+            if let Some(text) = &self.hover_text {
+                egui::Area::new(egui::Id::new("hover_text"))
+                    .anchor(egui::Align2::LEFT_TOP, Vec2::new(10.0, 8.0))
+                    .order(egui::Order::Foreground)
+                    .interactable(false)
+                    .show(ctx, |ui| {
+                        ui.label(
+                            RichText::new(text)
+                                .color(theme::HOVER_TEXT)
+                                .size(15.0)
+                                .background_color(egui::Color32::from_black_alpha(120)),
+                        );
+                    });
+            }
+        }
+
+        // XP drops float up beside the minimap.
+        self.xp_drops
+            .retain(|(_, _, at)| now.duration_since(*at).as_secs_f32() < 1.6);
+        for (i, (skill, amount, at)) in self.xp_drops.iter().enumerate() {
+            let t = now.duration_since(*at).as_secs_f32();
+            egui::Area::new(egui::Id::new(("xp_drop", i)))
+                .anchor(
+                    egui::Align2::RIGHT_TOP,
+                    Vec2::new(-250.0, 40.0 + i as f32 * 18.0 - t * 30.0),
+                )
+                .order(egui::Order::Foreground)
+                .interactable(false)
                 .show(ctx, |ui| {
-                    ui.label(RichText::new(format!("+{amount} {skill} XP")).color(theme::ACCENT));
+                    ui.label(
+                        RichText::new(format!("+{amount} {skill}"))
+                            .color(theme::ACCENT)
+                            .size(14.0)
+                            .background_color(egui::Color32::from_black_alpha(110)),
+                    );
                 });
         }
 
         if self.show_minimap {
-            egui::Window::new("Minimap")
-                .default_pos([10.0, 10.0])
-                .resizable(false)
-                .show(ctx, |ui| {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(120.0, 120.0), egui::Sense::hover());
-                    ui.painter()
-                        .rect_filled(rect, 4.0, egui::Color32::from_rgb(20, 40, 20));
-                    if let (Some(pos), Some(region)) = (player_tile, region) {
-                        let scale_x = rect.width() / region.width.max(1) as f32;
-                        let scale_y = rect.height() / region.height.max(1) as f32;
-                        for entity in entities {
-                            let EntityKind::Player {
-                                player_id,
-                                position,
-                                ..
-                            } = &entity.kind
-                            else {
-                                continue;
-                            };
-                            let dot = egui::pos2(
-                                rect.left() + position.x as f32 * scale_x,
-                                rect.top() + position.y as f32 * scale_y,
-                            );
-                            let color = if Some(*player_id) == local_player {
-                                theme::ACCENT
-                            } else {
-                                egui::Color32::from_rgb(230, 200, 80)
-                            };
-                            let radius = if Some(*player_id) == local_player {
-                                4.0
-                            } else {
-                                3.0
-                            };
-                            ui.painter().circle_filled(dot, radius, color);
-                        }
-                    } else {
-                        ui.painter()
-                            .circle_filled(rect.center(), 4.0, theme::ACCENT);
-                    }
-                });
+            let input = minimap::MinimapInput {
+                region,
+                content,
+                entities,
+                local_player,
+                player_tile,
+                hp,
+                max_hp,
+            };
+            if let Some(target) = minimap::draw_minimap(ctx, &mut self.minimap_cache, &input) {
+                action = UiAction::WalkTo(target);
+            }
         }
 
-        egui::TopBottomPanel::bottom("chat_panel").show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(80.0)
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    for line in &self.combat_log {
-                        ui.colored_label(egui::Color32::LIGHT_RED, line);
-                    }
-                    for (from, msg) in &self.chat_log {
-                        ui.label(format!("[{from}] {msg}"));
-                    }
-                });
-            ui.horizontal(|ui| {
-                egui::ComboBox::from_id_salt("chat_channel")
-                    .selected_text(format!("{:?}", self.chat_channel))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.chat_channel, ChatChannel::Local, "Local");
-                        ui.selectable_value(&mut self.chat_channel, ChatChannel::Global, "Global");
-                        ui.selectable_value(&mut self.chat_channel, ChatChannel::Clan, "Clan");
-                    });
-                let response = ui.text_edit_singleline(&mut self.chat_input);
-                if (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                    || ui.button("Send").clicked()
-                {
-                    if !self.chat_input.is_empty() {
-                        action = UiAction::Chat {
-                            channel: self.chat_channel,
-                            message: self.chat_input.clone(),
-                        };
-                        self.chat_input.clear();
-                    }
-                }
-            });
-        });
-
-        egui::SidePanel::right("side_panel")
-            .default_width(280.0)
-            .show(ctx, |ui| {
-                widgets::hp_bar(ui, hp, max_hp);
-                widgets::status_row(ui, self.connected, &self.status);
-
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.show_minimap, "Map");
-                });
-                ui.separator();
-
-                widgets::tab_bar(ui, &mut self.active_tab);
-
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let tab_action = side_panel::draw_active_tab(
-                            ui,
-                            self,
-                            content,
-                            inventory,
-                            bank,
-                            equipment,
-                            skills,
-                            quest_text,
-                            combat_opponent,
-                        );
-                        if !matches!(tab_action, UiAction::None) {
-                            action = tab_action;
-                        }
-
-                        let trade_action =
-                            side_panel::draw_trade_section(ui, self, content, inventory);
-                        if !matches!(trade_action, UiAction::None) {
-                            action = trade_action;
-                        }
-
-                        let footer_action = side_panel::draw_activities_footer(ui);
-                        if !matches!(footer_action, UiAction::None) {
-                            action = footer_action;
-                        }
-                    });
-            });
-
-        if let Some((npc_entity, node)) = self.active_dialogue.clone() {
-            egui::Window::new("Dialogue")
-                .collapsible(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.label(&node.text);
-                    ui.separator();
-                    for (idx, opt) in node.options.iter().enumerate() {
-                        if ui.button(&opt.label).clicked() {
-                            action = UiAction::DialogueSelect {
-                                npc_entity,
-                                dialogue_id: node.id.clone(),
-                                option_index: idx,
-                            };
-                            self.active_dialogue = None;
-                        }
-                    }
-                });
+        let data = panels::PanelData {
+            content,
+            inventory,
+            equipment,
+            skills,
+            quest_text,
+            combat_opponent,
+        };
+        let panel_action = panels::draw_side_panel(ctx, self, &data);
+        if !matches!(panel_action, UiAction::None) {
+            action = panel_action;
         }
 
-        if let Some((shop_id, stock)) = self.open_shop.clone() {
-            egui::Window::new("Shop")
-                .collapsible(false)
-                .show(ctx, |ui| {
-                    ui.label(format!("Shop: {shop_id}"));
-                    for item in &stock {
-                        let name = widgets::item_name(content, item.item_id);
-                        if ui
-                            .button(format!("Buy {name} x{} for {}", item.quantity, item.price))
-                            .clicked()
-                        {
-                            action = UiAction::ShopBuy {
-                                shop_id: shop_id.clone(),
-                                item_id: item.item_id,
-                                quantity: 1,
-                            };
-                        }
-                    }
-                    if ui.button("Close").clicked() {
-                        self.open_shop = None;
-                    }
-                });
+        match chat::draw_chat(ctx, &mut self.chat) {
+            Some(ChatOutput::Say(channel, message)) => {
+                action = UiAction::Chat { channel, message };
+            }
+            Some(ChatOutput::Whisper(to, message)) => {
+                action = UiAction::PrivateMessage { to, message };
+            }
+            None => {}
+        }
+
+        // Windows
+        fn take(a: UiAction, action: &mut UiAction) {
+            if !matches!(a, UiAction::None) {
+                *action = a;
+            }
+        }
+        take(windows::draw_dialogue(ctx, self, content), &mut action);
+        take(
+            windows::draw_shop(ctx, self, content, inventory),
+            &mut action,
+        );
+        take(
+            windows::draw_trade(ctx, self, content, inventory),
+            &mut action,
+        );
+        match self.open_station {
+            Some((StationTag::Bank, _)) => take(
+                windows::draw_bank(ctx, self, content, inventory, bank),
+                &mut action,
+            ),
+            Some((StationTag::Market, _)) => take(
+                windows::draw_market(ctx, self, content, inventory),
+                &mut action,
+            ),
+            Some(_) => take(
+                windows::draw_crafting(ctx, self, content, inventory, skills),
+                &mut action,
+            ),
+            None => {}
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.context_menu = None;
         }
-
         if let Some(menu) = self.context_menu.clone() {
             if let Some(menu_action) = context_menu::draw_context_menu(ctx, &menu) {
                 self.context_menu = None;
@@ -353,6 +338,7 @@ impl GameUi {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_combat_health_bars(
     ctx: &Context,
     entity_ids: &[EntityId],
@@ -435,9 +421,11 @@ pub enum UiAction {
         channel: ChatChannel,
         message: String,
     },
+    WalkTo(TilePos),
     DropItem(usize),
     EquipItem(usize),
     UnequipItem(openmmo_common::EquipSlot),
+    UseItem(usize),
     BankDeposit {
         inv_slot: usize,
         quantity: u32,
@@ -449,13 +437,17 @@ pub enum UiAction {
     Refine {
         recipe_id: String,
     },
+    Craft {
+        recipe_id: String,
+        count: u32,
+    },
     DialogueSelect {
-        npc_entity: openmmo_common::EntityId,
+        npc_entity: EntityId,
         dialogue_id: String,
         option_index: usize,
     },
     CastSpell {
-        target: openmmo_common::EntityId,
+        target: EntityId,
         spell_id: String,
     },
     SelectSpecialization {
@@ -465,6 +457,11 @@ pub enum UiAction {
     ShopBuy {
         shop_id: String,
         item_id: ItemId,
+        quantity: u32,
+    },
+    ShopSell {
+        shop_id: String,
+        inv_slot: usize,
         quantity: u32,
     },
     MarketPlaceOffer {

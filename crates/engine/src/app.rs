@@ -9,7 +9,7 @@ use egui_winit::State as EguiWinitState;
 use openmmo_common::{
     ContentPack, EntityKind, Equipment, NpcFootprint, RegionDef, RegionId, TilePos, WorldEntity,
 };
-use openmmo_protocol::{ClientMessage, ServerMessage};
+use openmmo_protocol::{ChatChannel, ClientMessage, ServerMessage};
 
 use egui_winit::egui;
 
@@ -22,8 +22,8 @@ use crate::{
     movement_interp::EntityMovementInterp,
     renderer::{HoverTarget, Renderer},
     ui::{
-        build_context_menu, draw_combat_health_bars, setup_theme, to_client_message, GameUi,
-        UiAction,
+        build_context_menu, draw_combat_health_bars, setup_theme, to_client_message, ChatKind,
+        ContextMenuAction, GameUi, UiAction,
     },
 };
 
@@ -256,9 +256,11 @@ impl EngineApp {
                 message,
             } => {
                 self.ui.connected = success;
-                self.ui.status = message;
+                self.ui.status = message.clone();
                 if success {
                     self.local_player = player_id;
+                    self.ui.chat.game(message);
+                    self.ui.chat.game("Right-click things for options. Talk to the Wasteland Guide in the town square to begin.");
                 }
             }
             ServerMessage::WorldSnapshot {
@@ -364,12 +366,24 @@ impl EngineApp {
             } => {
                 self.skills = skills;
                 for (skill, level) in levels_gained {
-                    self.ui.status = format!("{} level up: {level}", skill.name());
-                    let _ = (skill, level);
+                    self.ui.chat.game(format!(
+                        "Congratulations, your {} level is now {level}!",
+                        skill.name()
+                    ));
                 }
             }
-            ServerMessage::ChatMessage { from, message, .. } => {
-                self.ui.chat_log.push((from, message));
+            ServerMessage::ChatMessage {
+                channel,
+                from,
+                message,
+            } => {
+                let kind = match channel {
+                    ChatChannel::Local => ChatKind::Local,
+                    ChatChannel::Global => ChatKind::Global,
+                    ChatChannel::Clan => ChatKind::Clan,
+                    ChatChannel::Private => ChatKind::Private,
+                };
+                self.ui.chat.push(kind, from, message);
             }
             ServerMessage::XpDrop { skill, amount } => {
                 self.ui.xp_drops.push((
@@ -377,6 +391,24 @@ impl EngineApp {
                     amount,
                     std::time::Instant::now(),
                 ));
+                // A Fabrication drop means a craft finished: start the next one.
+                if skill == openmmo_common::Skill::Fabrication {
+                    if let Some((recipe_id, remaining)) = self.ui.craft_queue.clone() {
+                        if remaining > 0 {
+                            self.ui.craft_queue = Some((recipe_id.clone(), remaining - 1));
+                            self.send(ClientMessage::Refine { recipe_id });
+                        } else {
+                            self.ui.craft_queue = None;
+                        }
+                    }
+                }
+            }
+            ServerMessage::StationOpen { station, position } => {
+                self.ui.open_station = Some((station, position));
+                self.ui.open_shop = None;
+            }
+            ServerMessage::Notice { message } => {
+                self.ui.chat.game(message);
             }
             ServerMessage::Damage {
                 source,
@@ -384,10 +416,24 @@ impl EngineApp {
                 amount,
                 ..
             } => {
-                self.ui.combat_log.push(format!(
-                    "Damage: {:?} -> {:?} ({amount})",
-                    source.0, target.0
-                ));
+                {
+                    let name = |id: openmmo_common::EntityId| {
+                        self.entities
+                            .iter()
+                            .find(|e| e.entity_id == id)
+                            .map(|e| crate::ui::entity_display_name(&self.content, e).0)
+                            .unwrap_or_else(|| "something".into())
+                    };
+                    let local = self.local_entity_id();
+                    let text = if local == Some(source) {
+                        format!("You hit {} for {amount}.", name(target))
+                    } else if local == Some(target) {
+                        format!("{} hits you for {amount}.", name(source))
+                    } else {
+                        format!("{} hits {} for {amount}.", name(source), name(target))
+                    };
+                    self.ui.chat.push(ChatKind::Combat, "", text);
+                }
                 if let Some(local_eid) = self.local_entity_id() {
                     if source == local_eid {
                         self.combat_opponent = Some(target);
@@ -432,7 +478,16 @@ impl EngineApp {
                 }
             }
             ServerMessage::Death { entity, .. } => {
-                self.ui.combat_log.push(format!("Entity {} died", entity.0));
+                if self.local_entity_id() == Some(entity) {
+                    self.ui
+                        .chat
+                        .push(ChatKind::Combat, "", "Oh dear, you are dead!");
+                } else if let Some(e) = self.entities.iter().find(|e| e.entity_id == entity) {
+                    let name = crate::ui::entity_display_name(&self.content, e).0;
+                    self.ui
+                        .chat
+                        .push(ChatKind::Combat, "", format!("You have defeated {name}."));
+                }
                 if let Some(corpse) = self.capture_death_corpse(entity) {
                     self.death_corpses.push(corpse);
                 }
@@ -510,7 +565,9 @@ impl EngineApp {
                 }
             }
             ServerMessage::Error { message } => {
-                self.ui.status = message;
+                self.ui.status = message.clone();
+                self.ui.chat.error(message);
+                self.ui.craft_queue = None;
             }
             ServerMessage::CollectionLogEntry { item_id, source } => {
                 let name = self
@@ -519,7 +576,9 @@ impl EngineApp {
                     .map(|i| i.name.clone())
                     .unwrap_or_else(|| format!("Item {}", item_id.0));
                 self.ui.collection_log.push((name.clone(), item_id.0));
-                self.ui.status = format!("Collected {name} from {source}");
+                self.ui
+                    .chat
+                    .game(format!("New collection log entry: {name} ({source})."));
             }
             _ => {}
         }
@@ -684,33 +743,15 @@ impl EngineApp {
         self.ui.open_shop = None;
     }
 
+    /// Left-click default: the entity's primary action (chop, mine, attack,
+    /// talk, open, take). Players need a menu to trade, so they get none.
     fn handle_entity_click(&self, entity_id: openmmo_common::EntityId) -> Option<ClientMessage> {
         let entity = self.entities.iter().find(|e| e.entity_id == entity_id)?;
-        match &entity.kind {
-            EntityKind::Object { .. } => Some(ClientMessage::Scavenge {
-                object_entity: entity_id,
-            }),
-            EntityKind::GroundItem { .. } => Some(ClientMessage::PickupItem {
-                ground_entity: entity_id,
-            }),
-            EntityKind::Npc { aggro_range, .. } => {
-                if *aggro_range == 0 {
-                    Some(ClientMessage::TalkToNpc {
-                        npc_entity: entity_id,
-                    })
-                } else {
-                    Some(ClientMessage::Attack {
-                        target: entity_id,
-                        style: openmmo_common::CombatStyle::Melee,
-                    })
-                }
-            }
-            EntityKind::Boss { .. } => Some(ClientMessage::Attack {
-                target: entity_id,
-                style: openmmo_common::CombatStyle::Melee,
-            }),
-            _ => None,
+        if matches!(entity.kind, EntityKind::Player { .. }) {
+            return None;
         }
+        let (_, action) = crate::ui::primary_action(&self.content, entity)?;
+        to_client_message(action)
     }
 
     fn local_player_position(&self) -> Option<openmmo_common::TilePos> {
@@ -801,6 +842,17 @@ impl EngineApp {
         };
 
         let hover = self.compute_hover(renderer);
+        self.ui.hover_text = crate::ui::hover_label(&self.content, &self.entities, hover);
+
+        // Station interfaces close once the player walks away from them.
+        if let (Some((_, station_pos)), Some(me)) =
+            (self.ui.open_station, self.local_player_position())
+        {
+            if me.chebyshev_distance(&station_pos) > 1 {
+                self.ui.open_station = None;
+                self.ui.craft_queue = None;
+            }
+        }
 
         renderer.render_world_pass(
             &mut encoder,
@@ -997,8 +1049,38 @@ impl EngineApp {
                 self.send(ClientMessage::JoinMinigame { minigame_id });
             }
             UiAction::ContextMenu(menu_action) => {
+                if let ContextMenuAction::Examine(id) = menu_action {
+                    if let Some(entity) = self.entities.iter().find(|e| e.entity_id == id) {
+                        let text = crate::ui::examine_text(&self.content, entity);
+                        self.ui.chat.game(text);
+                    }
+                } else if let Some(msg) = to_client_message(menu_action) {
+                    self.close_shop_on_world_interaction();
+                    self.send(msg);
+                }
+            }
+            UiAction::WalkTo(target) => {
                 self.close_shop_on_world_interaction();
-                self.send(to_client_message(menu_action));
+                self.send(ClientMessage::WalkIntent { target });
+            }
+            UiAction::UseItem(inv_slot) => {
+                self.send(ClientMessage::UseItem { inv_slot });
+            }
+            UiAction::ShopSell {
+                shop_id,
+                inv_slot,
+                quantity,
+            } => {
+                self.send(ClientMessage::ShopSell {
+                    shop_id,
+                    inv_slot,
+                    quantity,
+                });
+            }
+            UiAction::Craft { recipe_id, count } => {
+                // One at a time; the rest are queued and sent as each finishes.
+                self.ui.craft_queue = Some((recipe_id.clone(), count.saturating_sub(1)));
+                self.send(ClientMessage::Refine { recipe_id });
             }
             UiAction::Connect => {}
             UiAction::None => {}
