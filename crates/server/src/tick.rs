@@ -1599,7 +1599,12 @@ fn complete_scavenge(
     if def.depletes {
         if let Some(o) = world.objects.get_mut(&object_entity) {
             o.depleted = true;
-            o.respawn_ticks = 5;
+            // Content sets per-node respawn (oak slower than birch); 0 = default.
+            o.respawn_ticks = if def.respawn_ticks > 0 {
+                def.respawn_ticks
+            } else {
+                5
+            };
         }
     }
 }
