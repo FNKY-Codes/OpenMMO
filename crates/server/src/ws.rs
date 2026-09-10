@@ -310,6 +310,7 @@ fn login_failure(message: &str) -> ServerMessage {
         success: false,
         player_id: None,
         message: message.to_string(),
+        content_fingerprint: String::new(),
     }
 }
 
@@ -461,6 +462,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 let snapshot = snapshot_message(&world, Some(pid));
                 let journal = quest_journal(&world, pid);
                 let inv = world.players.get(&pid).map(inventory_update);
+                let content_fingerprint = world.content.fingerprint();
                 drop(world);
 
                 player_id = Some(pid);
@@ -488,6 +490,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         success: true,
                         player_id: Some(pid),
                         message: "Welcome to OpenMMO".into(),
+                        content_fingerprint,
                     },
                 );
                 send_json(&conn_tx, &ServerMessage::QuestJournal { entries: journal });

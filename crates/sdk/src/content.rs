@@ -564,6 +564,52 @@ impl ContentPack {
         Ok(pack)
     }
 
+    /// Stable summary of the pack's shape (ids, names, region sizes). The
+    /// server sends it at login so a client bundling different content can
+    /// warn the player to update rather than render the wrong world.
+    pub fn fingerprint(&self) -> String {
+        // FNV-1a over a canonical text form: stable across Rust versions and
+        // platforms, unlike `DefaultHasher`, and the client and server are
+        // not always built by the same toolchain.
+        let mut s = String::new();
+        use std::fmt::Write as _;
+        for i in &self.items {
+            let _ = write!(s, "i{}:{}:{};", i.id.0, i.name, i.stackable);
+        }
+        for n in &self.npcs {
+            let _ = write!(s, "n{}:{}:{};", n.id.0, n.name, n.max_hp);
+        }
+        for o in &self.objects {
+            let _ = write!(s, "o{}:{}:{:?};", o.id.0, o.name, o.station);
+        }
+        for r in &self.regions {
+            let _ = write!(s, "r{}:{}:{}x{}:", r.id.0, r.name, r.width, r.height);
+            for b in &r.tiles {
+                let _ = write!(s, "{b:x}");
+            }
+            for o in &r.objects {
+                let _ = write!(s, "|{}@{},{}", o.object_id.0, o.position.x, o.position.y);
+            }
+            for t in &r.transitions {
+                let _ = write!(
+                    s,
+                    "|t{},{}>{}",
+                    t.position.x, t.position.y, t.target_region.0
+                );
+            }
+            s.push(';');
+        }
+        for rcp in &self.recipes {
+            let _ = write!(s, "c{}:{};", rcp.id, rcp.output.0);
+        }
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in s.bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        format!("{h:016x}")
+    }
+
     pub fn item(&self, id: ItemId) -> Option<&ItemDef> {
         self.items.iter().find(|i| i.id == id)
     }

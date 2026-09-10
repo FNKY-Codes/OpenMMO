@@ -254,6 +254,7 @@ impl EngineApp {
                 success,
                 player_id,
                 message,
+                content_fingerprint,
             } => {
                 self.ui.connected = success;
                 self.ui.status = message.clone();
@@ -261,6 +262,13 @@ impl EngineApp {
                     self.local_player = player_id;
                     self.ui.chat.game(message);
                     self.ui.chat.game("Right-click things for options. Talk to the Wasteland Guide in the town square to begin.");
+                    if !content_fingerprint.is_empty()
+                        && content_fingerprint != self.content.fingerprint()
+                    {
+                        let warn = "Your client's game content doesn't match the server's — the world may look wrong. Download the latest release from github.com/FNKY-Codes/OpenMMO/releases.";
+                        self.ui.chat.error(warn);
+                        self.ui.status = "Client content out of date".into();
+                    }
                 }
             }
             ServerMessage::WorldSnapshot {

@@ -159,6 +159,10 @@ pub enum ServerMessage {
         success: bool,
         player_id: Option<PlayerId>,
         message: String,
+        /// `ContentPack::fingerprint()` of the server's content; clients
+        /// compare it with their bundled pack.
+        #[serde(default)]
+        content_fingerprint: String,
     },
     WorldSnapshot {
         tick: u64,
@@ -373,6 +377,7 @@ mod tests {
             success: true,
             player_id: Some(pid),
             message: "ok".into(),
+            content_fingerprint: "abc".into(),
         });
         roundtrip_server(ServerMessage::WorldSnapshot {
             tick: 1,
