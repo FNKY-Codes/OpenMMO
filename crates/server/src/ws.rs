@@ -15,21 +15,29 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use openmmo_common::PlayerId;
 use openmmo_protocol::{decode_client, encode_server, ClientMessage, ServerMessage};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, oneshot, RwLock};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
 use crate::content::{default_content_path, load_content_dir};
 use crate::economy::assign_ledger_contract;
-use crate::persistence;
+use crate::persistence::{self, AuthResult, CharacterError};
 use crate::quest::quest_journal;
 use crate::state::{GameWorld, SharedWorld};
-use crate::tick::{handle_client_message, inventory_update, process_tick, snapshot_message, MessageTarget};
+use crate::tick::{
+    handle_client_message, inventory_update, process_tick, snapshot_message, MessageTarget,
+};
+
+/// How often every online player is flushed to the database.
+const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(60);
 
 pub struct AppState {
     pub world: SharedWorld,
     pub player_senders: Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<String>>>>,
+    /// Fired to force-disconnect a player's socket (used when the same
+    /// character logs in from a second connection).
+    pub player_kicks: Arc<RwLock<HashMap<PlayerId, oneshot::Sender<String>>>>,
     pub broadcast_senders: Arc<RwLock<HashMap<u64, mpsc::UnboundedSender<String>>>>,
     pub next_conn_id: Arc<RwLock<u64>>,
 }
@@ -92,18 +100,74 @@ impl AppState {
         &self,
         player_id: PlayerId,
         tx: mpsc::UnboundedSender<String>,
+        kick: oneshot::Sender<String>,
     ) {
         self.player_senders.write().await.insert(player_id, tx);
+        self.player_kicks.write().await.insert(player_id, kick);
     }
 
     pub async fn unregister_player(&self, player_id: PlayerId) {
         self.player_senders.write().await.remove(&player_id);
+        self.player_kicks.write().await.remove(&player_id);
+    }
+
+    /// If `character_name` is already online, save it, tell that socket to
+    /// close, and remove the player from the world so the new login can take
+    /// over. Returns true when a session was evicted.
+    async fn evict_existing_session(&self, character_name: &str) -> bool {
+        let existing = {
+            let world = self.world.read().await;
+            world
+                .players
+                .values()
+                .find(|p| p.name.eq_ignore_ascii_case(character_name))
+                .map(|p| p.id)
+        };
+        let Some(old_pid) = existing else {
+            return false;
+        };
+        if let Some(kick) = self.player_kicks.write().await.remove(&old_pid) {
+            let _ = kick.send("Logged in from another location".to_string());
+        }
+        let snapshot = {
+            let world = self.world.read().await;
+            world.players.get(&old_pid).cloned()
+        };
+        if let Some(player) = snapshot {
+            if let Err(e) = persistence::save_player(&player).await {
+                warn!("failed to save evicted session {}: {e}", player.name);
+            }
+        }
+        self.unregister_player(old_pid).await;
+        self.world.write().await.remove_player(old_pid);
+        true
+    }
+
+    /// Persist every online player. Returns how many rows were written.
+    pub async fn save_all_players(&self) -> usize {
+        if !persistence::enabled() {
+            return 0;
+        }
+        let players: Vec<_> = {
+            let world = self.world.read().await;
+            world.players.values().cloned().collect()
+        };
+        persistence::save_all(&players).await
     }
 }
 
 pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     let content_path = default_content_path();
-    let content = load_content_dir(&content_path).unwrap_or_default();
+    let content = match load_content_dir(&content_path) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(
+                "Failed to load content from {}: {e:#}. Starting with an empty world.",
+                content_path.display()
+            );
+            Default::default()
+        }
+    };
     let mut world = GameWorld::new(content);
     world.quests.load(&world.content.clone());
     info!(
@@ -117,6 +181,7 @@ pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         world: world.clone(),
         player_senders: Arc::new(RwLock::new(HashMap::new())),
+        player_kicks: Arc::new(RwLock::new(HashMap::new())),
         broadcast_senders: Arc::new(RwLock::new(HashMap::new())),
         next_conn_id: Arc::new(RwLock::new(0)),
     });
@@ -127,7 +192,7 @@ pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
         let mut full_snapshot_counter = 0u64;
         loop {
             interval.tick().await;
-            let mut tick_messages = Vec::new();
+            let tick_messages;
             {
                 let mut w = tick_state.world.write().await;
                 tick_messages = process_tick(&mut w);
@@ -137,7 +202,7 @@ pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
                     entities: w.entities_snapshot(),
                 };
                 tick_state.broadcast(&delta).await;
-                if full_snapshot_counter % 50 == 0 {
+                if full_snapshot_counter.is_multiple_of(50) {
                     let player_ids: Vec<PlayerId> = tick_state
                         .player_senders
                         .read()
@@ -164,18 +229,63 @@ pub async fn run_server(addr: SocketAddr) -> anyhow::Result<()> {
         }
     });
 
+    if persistence::enabled() {
+        let save_state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(AUTOSAVE_INTERVAL);
+            interval.tick().await; // first tick fires immediately; skip it
+            loop {
+                interval.tick().await;
+                let n = save_state.save_all_players().await;
+                if n > 0 {
+                    info!("Autosaved {n} player(s)");
+                }
+            }
+        });
+    }
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_handler))
         .route("/api/drops", get(drop_rates))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .with_state(state.clone());
 
     info!("OpenMMO server listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    // Flush everyone once the listener has stopped accepting connections.
+    let n = state.save_all_players().await;
+    info!("Shutdown: saved {n} player(s)");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    info!("Shutdown signal received");
 }
 
 async fn health() -> &'static str {
@@ -195,31 +305,53 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) ->
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
+fn login_failure(message: &str) -> ServerMessage {
+    ServerMessage::LoginResult {
+        success: false,
+        player_id: None,
+        message: message.to_string(),
+    }
+}
+
+fn send_json(tx: &mpsc::UnboundedSender<String>, msg: &ServerMessage) {
+    if let Ok(json) = encode_server(msg) {
+        let _ = tx.send(json);
+    }
+}
+
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
     let (conn_tx, mut conn_rx) = mpsc::unbounded_channel::<String>();
     let conn_id = state.register_connection(conn_tx.clone()).await;
 
     let send_task = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                msg = conn_rx.recv() => {
-                    match msg {
-                        Some(json) => {
-                            if sender.send(Message::Text(json)).await.is_err() {
-                                break;
-                            }
-                        }
-                        None => break,
-                    }
-                }
+        while let Some(json) = conn_rx.recv().await {
+            if sender.send(Message::Text(json)).await.is_err() {
+                break;
             }
         }
+        let _ = sender.close().await;
     });
 
     let mut player_id: Option<PlayerId> = None;
+    // Resolved when another login evicts this session. Replaced on each login.
+    let (_noop_tx, mut kick_rx) = oneshot::channel::<String>();
 
-    while let Some(Ok(msg)) = receiver.next().await {
+    loop {
+        let msg = tokio::select! {
+            biased;
+            reason = &mut kick_rx => {
+                if let Ok(reason) = reason {
+                    send_json(&conn_tx, &ServerMessage::Error { message: reason });
+                }
+                // The evictor already saved and removed the player.
+                player_id = None;
+                break;
+            }
+            msg = receiver.next() => msg,
+        };
+        let Some(Ok(msg)) = msg else { break };
+
         let text = match msg {
             Message::Text(t) => t,
             Message::Close(_) => break,
@@ -240,48 +372,70 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 character_name,
                 password,
             } => {
-                let mut world = state.world.write().await;
-                if !crate::anticheat::validate_username(username) {
-                    drop(world);
-                    let login = ServerMessage::LoginResult {
-                        success: false,
-                        player_id: None,
-                        message: "Invalid username".into(),
-                    };
-                    if let Ok(json) = encode_server(&login) {
-                        let _ = conn_tx.send(json);
-                    }
+                if player_id.is_some() {
+                    send_json(&conn_tx, &login_failure("Already logged in"));
                     continue;
                 }
-                if let Ok(db_url) = std::env::var("DATABASE_URL") {
-                    let authed = persistence::authenticate_account(&db_url, username, password)
-                        .await
-                        .unwrap_or(false);
-                    if !authed {
-                        drop(world);
-                        let login = ServerMessage::LoginResult {
-                            success: false,
-                            player_id: None,
-                            message: "Invalid credentials".into(),
-                        };
-                        if let Ok(json) = encode_server(&login) {
-                            let _ = conn_tx.send(json);
-                        }
+                if !crate::anticheat::validate_username(username) {
+                    send_json(&conn_tx, &login_failure("Invalid username"));
+                    continue;
+                }
+                if !crate::anticheat::validate_username(character_name) {
+                    send_json(&conn_tx, &login_failure("Invalid character name"));
+                    continue;
+                }
+                if persistence::enabled() && password.is_empty() {
+                    send_json(&conn_tx, &login_failure("Password required"));
+                    continue;
+                }
+
+                match persistence::authenticate_account(username, password).await {
+                    Ok(AuthResult::Ok) => {}
+                    Ok(AuthResult::Created) => info!("Created account {username}"),
+                    Ok(AuthResult::BadPassword) => {
+                        send_json(&conn_tx, &login_failure("Invalid credentials"));
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!("auth error for {username}: {e}");
+                        send_json(&conn_tx, &login_failure("Login temporarily unavailable"));
                         continue;
                     }
                 }
-                let pid = if let Ok(db_url) = std::env::var("DATABASE_URL") {
-                    persistence::load_or_create_player(&db_url, username, character_name, &mut world)
+
+                if state.evict_existing_session(character_name).await {
+                    info!("Evicted previous session for {character_name}");
+                }
+
+                let mut world = state.world.write().await;
+                let pid =
+                    match persistence::load_or_create_player(username, character_name, &mut world)
                         .await
-                        .unwrap_or_else(|_| world.add_player(character_name.clone()))
-                } else {
-                    world.add_player(character_name.clone())
-                };
+                    {
+                        Ok(Ok(pid)) => pid,
+                        Ok(Err(CharacterError::OwnedByOther)) => {
+                            drop(world);
+                            send_json(
+                                &conn_tx,
+                                &login_failure("That character name belongs to another account"),
+                            );
+                            continue;
+                        }
+                        Err(e) => {
+                            drop(world);
+                            warn!("load_or_create_player failed for {character_name}: {e}");
+                            send_json(&conn_tx, &login_failure("Login temporarily unavailable"));
+                            continue;
+                        }
+                    };
                 world.nudge_player_if_overlapping(pid);
                 if let Ok(redis_url) = std::env::var("REDIS_URL") {
                     let _ = crate::session::store_session(&redis_url, username, pid).await;
                 }
-                if world.players.get(&pid).is_some_and(|p| p.inventory.slots.iter().all(|s| s.is_none()))
+                if world
+                    .players
+                    .get(&pid)
+                    .is_some_and(|p| p.inventory.slots.iter().all(|s| s.is_none()))
                 {
                     let starter_items: Vec<_> = world
                         .content
@@ -309,11 +463,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 drop(world);
 
                 player_id = Some(pid);
-                state.register_player(pid, conn_tx.clone()).await;
+                let (kick_tx, new_kick_rx) = oneshot::channel();
+                kick_rx = new_kick_rx;
+                state.register_player(pid, conn_tx.clone(), kick_tx).await;
 
-                if let Ok(json) = encode_server(&snapshot) {
-                    let _ = conn_tx.send(json);
-                }
+                send_json(&conn_tx, &snapshot);
                 if let Some(region_id) = region_id {
                     let join_delta = ServerMessage::StateDelta {
                         tick,
@@ -325,22 +479,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     state.notify_region(region_id, pid, &join_delta).await;
                 }
                 if let Some(inv) = inv {
-                    if let Ok(json) = encode_server(&inv) {
-                        let _ = conn_tx.send(json);
-                    }
+                    send_json(&conn_tx, &inv);
                 }
-                let login = ServerMessage::LoginResult {
-                    success: true,
-                    player_id: Some(pid),
-                    message: "Welcome to OpenMMO".into(),
-                };
-                if let Ok(json) = encode_server(&login) {
-                    let _ = conn_tx.send(json);
-                }
-                let journal_msg = ServerMessage::QuestJournal { entries: journal };
-                if let Ok(json) = encode_server(&journal_msg) {
-                    let _ = conn_tx.send(json);
-                }
+                send_json(
+                    &conn_tx,
+                    &ServerMessage::LoginResult {
+                        success: true,
+                        player_id: Some(pid),
+                        message: "Welcome to OpenMMO".into(),
+                    },
+                );
+                send_json(&conn_tx, &ServerMessage::QuestJournal { entries: journal });
             }
             _ => {
                 if let Some(pid) = player_id {
@@ -363,10 +512,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     }
 
     if let Some(pid) = player_id {
-        if let Ok(db_url) = std::env::var("DATABASE_URL") {
+        let snapshot = {
             let world = state.world.read().await;
-            if let Some(player) = world.players.get(&pid) {
-                let _ = persistence::save_player(&db_url, player).await;
+            world.players.get(&pid).cloned()
+        };
+        if let Some(player) = snapshot {
+            if let Err(e) = persistence::save_player(&player).await {
+                warn!("failed to save {} on disconnect: {e}", player.name);
             }
         }
         state.unregister_player(pid).await;

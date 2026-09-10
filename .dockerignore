@@ -1,0 +1,8 @@
+target/
+assets/
+templates/
+docs/
+.github/
+.git/
+**/*.md
+!crates/**/*.md

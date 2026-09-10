@@ -80,13 +80,11 @@ pub fn validate_content(pack: &ContentPack) -> Vec<String> {
                             ));
                         }
                     }
-                    DialogueAction::OpenShop { shop_id } => {
-                        if !shop_ids.contains(shop_id) {
-                            errors.push(format!(
-                                "Dialogue {} references missing shop {}",
-                                dialogue.id, shop_id
-                            ));
-                        }
+                    DialogueAction::OpenShop { shop_id } if !shop_ids.contains(shop_id) => {
+                        errors.push(format!(
+                            "Dialogue {} references missing shop {}",
+                            dialogue.id, shop_id
+                        ));
                     }
                     _ => {}
                 }
