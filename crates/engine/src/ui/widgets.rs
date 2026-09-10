@@ -15,21 +15,22 @@ pub fn item_name(content: &ContentPack, item_id: ItemId) -> &str {
 }
 
 pub fn item_label(content: &ContentPack, slot: &InventorySlot) -> String {
-    format!(
-        "{} x{}",
-        item_name(content, slot.item_id),
-        slot.quantity
-    )
+    format!("{} x{}", item_name(content, slot.item_id), slot.quantity)
 }
 
 pub fn item_label_by_id(content: &ContentPack, item_id: ItemId, quantity: u32) -> String {
     format!("{} x{quantity}", item_name(content, item_id))
 }
 
-pub fn entity_display_name(content: &ContentPack, entity: &WorldEntity) -> (String, Option<String>) {
+pub fn entity_display_name(
+    content: &ContentPack,
+    entity: &WorldEntity,
+) -> (String, Option<String>) {
     match &entity.kind {
         EntityKind::Player { name, .. } => (name.clone(), Some("Player".into())),
-        EntityKind::Npc { name, aggro_range, .. } => {
+        EntityKind::Npc {
+            name, aggro_range, ..
+        } => {
             let subtitle = if *aggro_range == 0 {
                 "NPC"
             } else {
@@ -46,9 +47,7 @@ pub fn entity_display_name(content: &ContentPack, entity: &WorldEntity) -> (Stri
             (title, Some("Harvestable".into()))
         }
         EntityKind::GroundItem {
-            item_id,
-            quantity,
-            ..
+            item_id, quantity, ..
         } => (
             item_label_by_id(content, *item_id, *quantity),
             Some("Item".into()),
@@ -95,25 +94,35 @@ pub fn world_hp_bar(ui: &mut Ui, hp: u32, max_hp: u32) {
     };
     let bar_width = 52.0;
     let bar_height = 6.0;
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(bar_width, bar_height), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_width, bar_height), egui::Sense::hover());
     let fill_width = bar_width * ratio;
-    ui.painter()
-        .rect_filled(rect, 1.0, egui::Color32::from_rgba_unmultiplied(20, 20, 20, 180));
+    ui.painter().rect_filled(
+        rect,
+        1.0,
+        egui::Color32::from_rgba_unmultiplied(20, 20, 20, 180),
+    );
     if fill_width > 0.0 {
         let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_width, bar_height));
-        ui.painter().rect_filled(fill_rect, 1.0, theme::hp_color(ratio));
+        ui.painter()
+            .rect_filled(fill_rect, 1.0, theme::hp_color(ratio));
     }
     ui.painter().rect_stroke(
         rect,
         1.0,
-        egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 40)),
+        egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 40),
+        ),
     );
 }
 
 pub fn status_row(ui: &mut Ui, connected: bool, status: &str) {
     ui.horizontal(|ui| {
-        let dot = if connected { theme::ONLINE } else { theme::OFFLINE };
+        let dot = if connected {
+            theme::ONLINE
+        } else {
+            theme::OFFLINE
+        };
         let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
         ui.painter().circle_filled(rect.center(), 4.0, dot);
         ui.label(RichText::new(status).color(TEXT_MUTED).small());
@@ -187,7 +196,10 @@ pub fn skill_row(ui: &mut Ui, skill: Skill, level: u32, xp: u64) {
 }
 
 pub fn recipe_tooltip(ui: &mut Ui, content: &ContentPack, recipe: &RefinementRecipe) {
-    ui.label(format!("Requires Fabrication Lv {}", recipe.fabrication_level));
+    ui.label(format!(
+        "Requires Fabrication Lv {}",
+        recipe.fabrication_level
+    ));
     for input in &recipe.inputs {
         ui.label(format!(
             "  - {}",

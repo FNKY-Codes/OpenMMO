@@ -20,9 +20,7 @@ pub fn set_npc_model_dims(npc_id: NpcId, width: f32, height: f32) {
 
 pub fn entity_cube_dims(kind: &EntityKind) -> (f32, f32) {
     match kind {
-        EntityKind::Player { .. } => {
-            PLAYER_MODEL_DIMS.get().copied().unwrap_or((0.9, 1.8))
-        }
+        EntityKind::Player { .. } => PLAYER_MODEL_DIMS.get().copied().unwrap_or((0.9, 1.8)),
         EntityKind::Npc { npc_id, .. } => NPC_MODEL_DIMS
             .lock()
             .ok()
@@ -92,11 +90,7 @@ pub fn entity_aabb(
                 surface_y + height * 0.5,
                 tile.y as f32 + fp.height as f32 * 0.5,
             );
-            let half = Vec3::new(
-                fp.width as f32 * 0.5,
-                height * 0.5,
-                fp.height as f32 * 0.5,
-            );
+            let half = Vec3::new(fp.width as f32 * 0.5, height * 0.5, fp.height as f32 * 0.5);
             Some((center, half))
         }
         _ => {

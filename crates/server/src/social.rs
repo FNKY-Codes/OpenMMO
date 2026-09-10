@@ -182,9 +182,13 @@ mod tests {
         let a = PlayerId(Uuid::from_u128(1));
         let b = PlayerId(Uuid::from_u128(2));
         let c = PlayerId(Uuid::from_u128(3));
-        world.players.insert(a, test_player(1, "Alice", RegionId(1)));
+        world
+            .players
+            .insert(a, test_player(1, "Alice", RegionId(1)));
         world.players.insert(b, test_player(2, "Bob", RegionId(1)));
-        world.players.insert(c, test_player(3, "Carol", RegionId(2)));
+        world
+            .players
+            .insert(c, test_player(3, "Carol", RegionId(2)));
 
         let routed = route_chat(
             &world,
@@ -204,7 +208,9 @@ mod tests {
         let mut world = GameWorld::new(openmmo_common::ContentPack::default());
         let a = PlayerId(Uuid::from_u128(1));
         let b = PlayerId(Uuid::from_u128(2));
-        world.players.insert(a, test_player(1, "Alice", RegionId(1)));
+        world
+            .players
+            .insert(a, test_player(1, "Alice", RegionId(1)));
         world.players.insert(b, test_player(2, "Bob", RegionId(2)));
 
         let routed = route_chat(
@@ -223,9 +229,13 @@ mod tests {
         let a = PlayerId(Uuid::from_u128(1));
         let b = PlayerId(Uuid::from_u128(2));
         let c = PlayerId(Uuid::from_u128(3));
-        world.players.insert(a, test_player(1, "Alice", RegionId(1)));
+        world
+            .players
+            .insert(a, test_player(1, "Alice", RegionId(1)));
         world.players.insert(b, test_player(2, "Bob", RegionId(1)));
-        world.players.insert(c, test_player(3, "Carol", RegionId(1)));
+        world
+            .players
+            .insert(c, test_player(3, "Carol", RegionId(1)));
         world
             .social
             .clan_members

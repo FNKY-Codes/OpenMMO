@@ -42,8 +42,7 @@ pub fn validate_content(pack: &ContentPack) -> Vec<String> {
     for quest in &pack.quests {
         for stage in &quest.stages {
             match &stage.objective {
-                QuestObjective::KillNpc { npc_id, .. }
-                | QuestObjective::TalkToNpc { npc_id } => {
+                QuestObjective::KillNpc { npc_id, .. } | QuestObjective::TalkToNpc { npc_id } => {
                     if !npc_ids.contains(&npc_id.0) {
                         errors.push(format!(
                             "Quest {} references missing NPC {}",
@@ -81,13 +80,11 @@ pub fn validate_content(pack: &ContentPack) -> Vec<String> {
                             ));
                         }
                     }
-                    DialogueAction::OpenShop { shop_id } => {
-                        if !shop_ids.contains(shop_id) {
-                            errors.push(format!(
-                                "Dialogue {} references missing shop {}",
-                                dialogue.id, shop_id
-                            ));
-                        }
+                    DialogueAction::OpenShop { shop_id } if !shop_ids.contains(shop_id) => {
+                        errors.push(format!(
+                            "Dialogue {} references missing shop {}",
+                            dialogue.id, shop_id
+                        ));
                     }
                     _ => {}
                 }
@@ -227,10 +224,7 @@ fn lint_region(region: &RegionDef) -> Vec<String> {
 }
 
 fn in_bounds(pos: &TilePos, region: &RegionDef) -> bool {
-    pos.x >= 0
-        && pos.y >= 0
-        && (pos.x as u32) < region.width
-        && (pos.y as u32) < region.height
+    pos.x >= 0 && pos.y >= 0 && (pos.x as u32) < region.width && (pos.y as u32) < region.height
 }
 
 #[cfg(test)]

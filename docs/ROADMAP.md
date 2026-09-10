@@ -1,6 +1,6 @@
 # OpenMMO Roadmap
 
-**Last reviewed:** 2026-06-27
+**Last reviewed:** 2026-09-10
 
 ## Vision & principles
 
@@ -23,7 +23,14 @@ See [architecture.md](architecture.md) for component layout and data flow.
 | Phase 4 — Hardening | Anti-cheat, auth, persistence, docs | **Partial** — auth/redis added; postgres opt-in |
 | Phase 5 — Tooling | Atlas pipeline, WASM, plugins, editor | **Partial** — stubs expanded |
 
-## Recent fixes (2026-06-27)
+## Recent fixes (2026-09-10)
+
+- **Deployment:** server on Railway (`wss://server-production-2a39.up.railway.app/ws`), Dockerfile, Windows client releases on `v*` tags
+- **Accounts:** Argon2id passwords, account↔character binding, duplicate-login eviction, autosave + graceful shutdown
+- **Spawn region:** regions sorted by id; new players spawn in Verdant Reach again (was the empty Shattered Coast)
+- **Combat:** player melee range is footprint-aware and out-of-range players re-path; fixes standing still and dying to multi-tile NPCs
+
+## Older fixes (2026-06-27)
 
 - **Shop:** `DialogueSelect` sends `dialogue_id` so nested dialogue opens shop correctly
 - **XP:** Combat/harvest/refine sync `SkillUpdate` + `XpDrop`; HUD floaters persist 1.5s
@@ -104,13 +111,17 @@ Required before public self-hosting or multi-shard deployment.
 
 | ID | Item | Status | Key files |
 |----|------|--------|-----------|
-| B1 | Postgres default in release profile | Open | `crates/server/Cargo.toml`, `docs/self-hosting.md` |
-| B2 | Redis sessions in production path | Open | `crates/server/src/session.rs`, `deploy/docker-compose.yml` |
+| B1 | Postgres in production (Dockerfile builds with `postgres,redis`) | **Complete** (2026-09-10) | `Dockerfile`, `crates/server/src/persistence.rs` |
+| B2 | Redis sessions in production path | **Complete** (2026-09-10) | `crates/server/src/session.rs`, Railway |
 | B3 | WebSocket integration tests | Open | `.github/workflows/ci.yml` |
-| B4 | Audit log persistence | Open | `deploy/migrations/`, `crates/server/src/persistence.rs` |
-| B5 | CI release workflow | Open | `.github/workflows/` |
+| B4 | Audit log persistence | **Complete** — pooled writes to `audit_log` | `crates/server/src/persistence.rs` |
+| B5 | CI release workflow (Windows client zip on `v*` tags) | **Complete** (2026-09-10) | `.github/workflows/release.yml` |
+| B6 | Account security: Argon2id passwords, account↔character binding, duplicate-login eviction, autosave + graceful shutdown | **Complete** (2026-09-10) | `persistence.rs`, `ws.rs` |
+| B7 | Connection/chat rate limiting, working ban list | Open | `crates/server/src/anticheat.rs`, `ws.rs` |
+| B8 | Clippy clean under `-D warnings` (CI currently red on ~50 pre-existing lints) | Open | workspace |
+| B9 | `engine::model::tests::tiger_glb_loads_geometry` fails a depth assertion (asset vs. test drift) | Open | `crates/engine/src/model.rs`, `assets/models/Tiger_001.glb` |
 
-**Depends on:** B3 after A4; B4 after B1; B5 after B1 + B2
+**Depends on:** B3 after A4; B7 before open signups
 
 ---
 

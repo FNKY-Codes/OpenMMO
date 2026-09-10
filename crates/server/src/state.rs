@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use openmmo_common::{
-    BossState, ContentPack, EntityId, EntityKind, GroundItem, MarketOffer, MinigameLobby, NpcFootprint, NpcId,
-    NpcState, ObjectId, ObjectState, PlayerAction, PlayerId, PlayerState, QuestId, RegionDef,
-    RegionId, Skill, SkillBook, TilePos, WorldEntity, INVENTORY_SIZE,
+    BossState, ContentPack, EntityId, EntityKind, GroundItem, MarketOffer, MinigameLobby,
+    NpcFootprint, NpcId, NpcState, ObjectId, ObjectState, PlayerAction, PlayerId, PlayerState,
+    QuestId, RegionDef, RegionId, Skill, SkillBook, TilePos, WorldEntity, INVENTORY_SIZE,
 };
 use openmmo_protocol::ServerMessage;
 use tokio::sync::{broadcast, RwLock};
@@ -163,6 +163,32 @@ impl GameWorld {
         base
     }
 
+    /// Reset a loaded character to a sane spawn when their saved region or tile
+    /// no longer exists (content changed between sessions). Also clears any
+    /// transient action/combat state that must not survive a save.
+    #[cfg_attr(not(feature = "postgres"), allow(dead_code))]
+    pub fn ensure_player_position_valid(&self, player: &mut PlayerState) {
+        player.combat_target = None;
+        player.action = PlayerAction::Idle;
+        player.ticks_stationary = 1;
+        if player.hp == 0 {
+            player.hp = player.max_hp.max(1);
+        }
+        if self.is_walkable_in_region(player.region_id, player.position) {
+            return;
+        }
+        let (base_spawn, region_id) = self
+            .regions
+            .get(&player.region_id)
+            .map(|r| (r.spawn, r.id))
+            .or_else(|| self.content.regions.first().map(|r| (r.spawn, r.id)))
+            .unwrap_or((TilePos::new(5, 5), RegionId(1)));
+        let spawn = self.find_player_spawn(region_id, base_spawn);
+        player.region_id = region_id;
+        player.position = spawn;
+        player.last_position = spawn;
+    }
+
     /// Move a player off a tile if another player is already standing there.
     pub fn nudge_player_if_overlapping(&mut self, player_id: PlayerId) {
         let Some((region_id, position)) = self
@@ -172,9 +198,10 @@ impl GameWorld {
         else {
             return;
         };
-        let overlapping = self.players.values().any(|p| {
-            p.id != player_id && p.region_id == region_id && p.position == position
-        });
+        let overlapping = self
+            .players
+            .values()
+            .any(|p| p.id != player_id && p.region_id == region_id && p.position == position);
         if !overlapping {
             return;
         }
@@ -322,7 +349,10 @@ impl GameWorld {
         entities
     }
 
-    pub fn try_region_transition(&mut self, player_id: PlayerId) -> Option<openmmo_protocol::ServerMessage> {
+    pub fn try_region_transition(
+        &mut self,
+        player_id: PlayerId,
+    ) -> Option<openmmo_protocol::ServerMessage> {
         let (region_id, position, in_combat) = {
             let player = self.players.get(&player_id)?;
             let in_combat = matches!(player.action, PlayerAction::Combat { .. })
@@ -366,9 +396,9 @@ impl GameWorld {
         if self.audit_log.len() > 1000 {
             self.audit_log.pop_front();
         }
-        if let Ok(db_url) = std::env::var("DATABASE_URL") {
+        if crate::persistence::enabled() {
             tokio::spawn(async move {
-                let _ = crate::persistence::persist_audit(&db_url, &entry).await;
+                let _ = crate::persistence::persist_audit(&entry).await;
             });
         }
     }
@@ -388,7 +418,10 @@ impl GameWorld {
         self.entity_occupied_tiles_in_region(None, None)
     }
 
-    pub fn entity_occupied_tiles_excluding(&self, skip_entity: Option<EntityId>) -> HashSet<TilePos> {
+    pub fn entity_occupied_tiles_excluding(
+        &self,
+        skip_entity: Option<EntityId>,
+    ) -> HashSet<TilePos> {
         self.entity_occupied_tiles_in_region(None, skip_entity)
     }
 

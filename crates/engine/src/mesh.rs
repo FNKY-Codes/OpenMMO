@@ -31,7 +31,9 @@ impl ModelCache {
 
     pub fn get(&mut self, name: &str) -> Option<&Mesh> {
         if !self.models.contains_key(name) {
-            if let Ok(mesh) = load_obj_model(&self.assets_dir.join("models").join(format!("{name}.obj"))) {
+            if let Ok(mesh) =
+                load_obj_model(&self.assets_dir.join("models").join(format!("{name}.obj")))
+            {
                 self.models.insert(name.to_string(), mesh);
             }
         }
@@ -46,8 +48,8 @@ pub fn default_assets_dir() -> PathBuf {
 }
 
 fn load_obj_model(path: &Path) -> anyhow::Result<Mesh> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("read OBJ {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("read OBJ {}", path.display()))?;
     let mtl_path = path.with_extension("mtl");
     let materials = if mtl_path.exists() {
         load_mtl(&mtl_path)?
@@ -82,10 +84,7 @@ fn load_obj_model(path: &Path) -> anyhow::Result<Mesh> {
             }
             "usemtl" => {
                 if let Some(name) = parts.next() {
-                    current_color = materials
-                        .get(name)
-                        .copied()
-                        .unwrap_or([0.7, 0.7, 0.7, 1.0]);
+                    current_color = materials.get(name).copied().unwrap_or([0.7, 0.7, 0.7, 1.0]);
                 }
             }
             "f" => {
@@ -178,11 +177,7 @@ fn normalize_mesh(faces: &mut [MeshFace]) {
             }
         }
     }
-    let size = [
-        max[0] - min[0],
-        max[1] - min[1],
-        max[2] - min[2],
-    ];
+    let size = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
     let max_dim = size[0].max(size[1]).max(size[2]).max(0.001);
     let target_height = 1.2;
     let scale = target_height / max_dim;

@@ -97,8 +97,8 @@ impl EntityMovementInterp {
                 if existing.to_tile == new_pos {
                     return;
                 }
-                let facing_yaw = tile_movement_yaw(existing.to_tile, new_pos)
-                    .unwrap_or(existing.facing_yaw);
+                let facing_yaw =
+                    tile_movement_yaw(existing.to_tile, new_pos).unwrap_or(existing.facing_yaw);
 
                 if existing.to_tile.chebyshev_distance(&new_pos) > 1 {
                     Entry {
@@ -331,13 +331,7 @@ mod tests {
         for frame in 0..120 {
             if frame > 0 && frame % 38 == 0 {
                 let tile_x = (frame / 38) as i32;
-                interp.on_position_change(
-                    id,
-                    TilePos::new(tile_x, 0),
-                    t,
-                    None,
-                    None,
-                );
+                interp.on_position_change(id, TilePos::new(tile_x, 0), t, None, None);
             }
             let center = interp.visual_center(id, t, None, None).unwrap();
             positions.push(center[0]);

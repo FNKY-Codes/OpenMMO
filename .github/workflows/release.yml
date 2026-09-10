@@ -1,0 +1,58 @@
+name: Release client
+
+# Push a tag like `v0.1.0` to build the Windows client bundle and attach it
+# to a GitHub Release. The bundle is self-contained: exe + content + assets.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build and upload to"
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Baked into the client as the default "Server URL" on the login screen.
+  # Set the OPENMMO_SERVER_URL repository variable to override.
+  OPENMMO_SERVER_URL: ${{ vars.OPENMMO_SERVER_URL || 'wss://server-production-2a39.up.railway.app/ws' }}
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-windows
+
+      - name: Build client
+        run: cargo build --release -p openmmo-client
+
+      - name: Bundle
+        shell: pwsh
+        run: |
+          $tag = if ('${{ github.event.inputs.tag }}') { '${{ github.event.inputs.tag }}' } else { '${{ github.ref_name }}' }
+          $name = "openmmo-client-$tag-windows-x64"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item target/release/openmmo-client.exe "dist/$name/"
+          Copy-Item -Recurse content "dist/$name/content"
+          Copy-Item -Recurse assets "dist/$name/assets"
+          Copy-Item docs/PLAYING.md "dist/$name/README.md"
+          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
+          "BUNDLE=dist/$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: ${{ env.BUNDLE }}
+          generate_release_notes: true

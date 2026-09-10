@@ -1,7 +1,11 @@
 use openmmo_common::PlayerId;
 
 /// Redis-backed session cache: maps username → active player id for reconnect hints.
-pub async fn store_session(redis_url: &str, username: &str, player_id: PlayerId) -> anyhow::Result<()> {
+pub async fn store_session(
+    redis_url: &str,
+    username: &str,
+    player_id: PlayerId,
+) -> anyhow::Result<()> {
     #[cfg(feature = "redis")]
     {
         let client = redis::Client::open(redis_url)?;

@@ -53,13 +53,28 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for phase status, tier priorities, and pl
 
 14 consolidated skills in 4 paths — Survival, Outlands, Workshop, and Operator — including Endurance, Combat, Resilience, Scavenging, Fabrication, Electrics, and more.
 
+## Playing
+
+Download the latest client from [Releases](https://github.com/FNKY-Codes/OpenMMO/releases)
+— see [docs/PLAYING.md](docs/PLAYING.md).
+
+## Deploying
+
+The server ships as a Docker image (`Dockerfile`) and runs on Railway; see
+[docs/self-hosting.md](docs/self-hosting.md) for variables and setup. Pushing a
+`v*` tag builds and publishes the Windows client bundle.
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `PORT` | `8080` | Server port |
+| `OPENMMO_BIND` | `0.0.0.0:$PORT` | Server bind address (overrides `PORT`) |
 | `OPENMMO_CONTENT` | `content` | Path to content directory |
-| `OPENMMO_BIND` | `0.0.0.0:8080` | Server bind address |
-| `DATABASE_URL` | — | PostgreSQL connection (optional) |
+| `OPENMMO_ASSETS` | `assets` | Path to model assets (client) |
+| `OPENMMO_SERVER_URL` | `ws://127.0.0.1:8080/ws` | Default server URL on the client login screen |
+| `DATABASE_URL` | — | PostgreSQL connection; required for persistence |
+| `REDIS_URL` | — | Redis session cache (optional) |
 
 ## License
 

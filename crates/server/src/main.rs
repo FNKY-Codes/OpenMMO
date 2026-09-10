@@ -24,13 +24,24 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let addr: SocketAddr = std::env::var("OPENMMO_BIND")
-        .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
-        .parse()?;
+    // `PORT` is what most PaaS hosts (Railway, Fly, Heroku) inject; `OPENMMO_BIND`
+    // wins when set so self-hosters can pin an interface.
+    let bind = std::env::var("OPENMMO_BIND").unwrap_or_else(|_| {
+        let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+        format!("0.0.0.0:{port}")
+    });
+    let addr: SocketAddr = bind.parse()?;
 
-    if let Ok(db_url) = std::env::var("DATABASE_URL") {
-        persistence::run_migrations(&db_url).await?;
-        tracing::info!("PostgreSQL migrations applied");
+    match std::env::var("DATABASE_URL") {
+        Ok(db_url) => {
+            persistence::init(&db_url).await?;
+            if persistence::enabled() {
+                tracing::info!("PostgreSQL connected; migrations applied");
+            }
+        }
+        Err(_) => tracing::warn!(
+            "DATABASE_URL not set: running in memory-only mode, progress will not persist"
+        ),
     }
 
     ws::run_server(addr).await

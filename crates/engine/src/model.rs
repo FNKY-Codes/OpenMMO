@@ -168,10 +168,7 @@ pub fn resolve_npc_glb_path(name: &str) -> Option<PathBuf> {
             Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         }
     };
-    for filename in [
-        format!("{name}.glb"),
-        format!("{capitalized}.glb"),
-    ] {
+    for filename in [format!("{name}.glb"), format!("{capitalized}.glb")] {
         if let Some(path) = resolve_model_path(&filename) {
             return Some(path);
         }
@@ -226,7 +223,15 @@ pub fn load_player_model(
         entity_bounds::set_player_model_dims(model.width, model.height);
         return Ok(NpcModel::Skinned(model));
     }
-    let model = load_glb_model(device, queue, surface_format, path, 1.0, 1.0, TARGET_PLAYER_HEIGHT)?;
+    let model = load_glb_model(
+        device,
+        queue,
+        surface_format,
+        path,
+        1.0,
+        1.0,
+        TARGET_PLAYER_HEIGHT,
+    )?;
     entity_bounds::set_player_model_dims(model.width, model.height);
     Ok(NpcModel::Static(model))
 }
@@ -262,7 +267,10 @@ fn recompute_player_footprint(model: &mut SkinnedGlbModel) {
     let Some(idle) = model.animations.clips.get(crate::animation::PLAYER_IDLE) else {
         return;
     };
-    let idle_bones = model.skeleton.sample_clip_in_place(idle, 0.0, crate::animation::PLAYER_ROOT_NODE);
+    let idle_bones =
+        model
+            .skeleton
+            .sample_clip_in_place(idle, 0.0, crate::animation::PLAYER_ROOT_NODE);
     model.footprint_matrix = skinned_footprint_matrix_from_bones(
         &model.bind_vertices,
         &idle_bones,
@@ -270,8 +278,11 @@ fn recompute_player_footprint(model: &mut SkinnedGlbModel) {
         PLAYER_TILE_FOOTPRINT,
         TARGET_PLAYER_HEIGHT,
     );
-    let (width, height) =
-        skinned_footprint_dims_from_bones(&model.bind_vertices, &idle_bones, model.footprint_matrix);
+    let (width, height) = skinned_footprint_dims_from_bones(
+        &model.bind_vertices,
+        &idle_bones,
+        model.footprint_matrix,
+    );
     model.width = width.min(PLAYER_TILE_FOOTPRINT);
     model.height = height;
 }
@@ -540,11 +551,7 @@ impl SkinnedGlbModel {
             tint: instance.tint,
             _padding: [0.0; 4],
         };
-        queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         for part in &self.parts {
@@ -634,11 +641,7 @@ fn load_skinned_mesh_data(path: &Path) -> Result<(SkinnedMeshData, Skeleton, Ani
         anyhow::bail!("glb contains no skinned mesh geometry");
     }
 
-    Ok((
-        SkinnedMeshData { vertices, parts },
-        skeleton,
-        animations,
-    ))
+    Ok((SkinnedMeshData { vertices, parts }, skeleton, animations))
 }
 
 fn texture_for_material(
@@ -664,11 +667,9 @@ fn material_fallback_texture_for_material(material: gltf::Material) -> Option<im
     let g = (factor[1] * 255.0) as u8;
     let b = (factor[2] * 255.0) as u8;
     let a = (factor[3] * 255.0) as u8;
-    Some(image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
-        1,
-        1,
-        image::Rgba([r, g, b, a]),
-    )))
+    Some(image::DynamicImage::ImageRgba8(
+        image::RgbaImage::from_pixel(1, 1, image::Rgba([r, g, b, a])),
+    ))
 }
 
 fn read_skin_joints(joints_iter: gltf::mesh::util::ReadJoints<'_>) -> Vec<[u32; 4]> {
@@ -769,9 +770,7 @@ fn skinned_footprint_dims_from_bones(
     let mut max = [f32::MIN; 3];
     for v in vertices {
         let skinned = skin_vertex_position(bones, v.joints, v.weights, v.position);
-        let (p, w) = matrix.transform_point(Vec3::new(
-            skinned[0], skinned[1], skinned[2],
-        ));
+        let (p, w) = matrix.transform_point(Vec3::new(skinned[0], skinned[1], skinned[2]));
         let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
         let pos = [p.x * inv_w, p.y * inv_w, p.z * inv_w];
         for axis in 0..3 {
@@ -801,7 +800,12 @@ fn skinned_footprint_dims(vertices: &[SkinnedModelVertex], matrix: Mat4) -> (f32
     (width, height)
 }
 
-fn skin_vertex_position(bones: &[Mat4], joints: [u32; 4], weights: [f32; 4], position: [f32; 3]) -> [f32; 3] {
+fn skin_vertex_position(
+    bones: &[Mat4],
+    joints: [u32; 4],
+    weights: [f32; 4],
+    position: [f32; 3],
+) -> [f32; 3] {
     let mut out = [0.0f32; 3];
     for i in 0..4 {
         let bone = bones
@@ -818,7 +822,12 @@ fn skin_vertex_position(bones: &[Mat4], joints: [u32; 4], weights: [f32; 4], pos
     out
 }
 
-fn skin_vertex_normal(bones: &[Mat4], joints: [u32; 4], weights: [f32; 4], normal: [f32; 3]) -> [f32; 3] {
+fn skin_vertex_normal(
+    bones: &[Mat4],
+    joints: [u32; 4],
+    weights: [f32; 4],
+    normal: [f32; 3],
+) -> [f32; 3] {
     let mut out = [0.0f32; 3];
     for i in 0..4 {
         let bone = bones
@@ -839,7 +848,12 @@ fn skin_vertex_normal(bones: &[Mat4], joints: [u32; 4], weights: [f32; 4], norma
 }
 
 #[cfg(test)]
-fn skin_vertex_linear(bones: &[Mat4], joints: [u32; 4], weights: [f32; 4], position: [f32; 3]) -> [f32; 3] {
+fn skin_vertex_linear(
+    bones: &[Mat4],
+    joints: [u32; 4],
+    weights: [f32; 4],
+    position: [f32; 3],
+) -> [f32; 3] {
     let mut out = Mat4::identity();
     for i in 0..4 {
         let bone = bones
@@ -1056,11 +1070,7 @@ impl GlbModel {
             tint: instance.tint,
             _padding: [0.0; 4],
         };
-        queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&uniforms),
-        );
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
         render_pass.set_bind_group(0, &self.bind_group, &[]);
         render_pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
@@ -1078,7 +1088,12 @@ pub fn player_model_matrix(base: [f32; 3], yaw: f32) -> Mat4 {
     entity_model_matrix(base, yaw)
 }
 
-fn load_mesh_data(path: &Path, footprint_w: f32, footprint_h: f32, target_height: f32) -> Result<MeshData> {
+fn load_mesh_data(
+    path: &Path,
+    footprint_w: f32,
+    footprint_h: f32,
+    target_height: f32,
+) -> Result<MeshData> {
     let (document, buffers, images) = gltf::import(path).context("failed to import glb")?;
 
     let mut vertices = Vec::new();
@@ -1086,7 +1101,13 @@ fn load_mesh_data(path: &Path, footprint_w: f32, footprint_h: f32, target_height
 
     for scene in document.scenes() {
         for node in scene.nodes() {
-            append_node(node, &buffers, Mat4::identity(), &mut vertices, &mut indices);
+            append_node(
+                node,
+                &buffers,
+                Mat4::identity(),
+                &mut vertices,
+                &mut indices,
+            );
         }
     }
 
@@ -1135,11 +1156,7 @@ fn gltf_image_to_dynamic(image: &gltf::image::Data) -> Result<image::DynamicImag
             for (i, chunk) in image.pixels.chunks_exact(3).enumerate() {
                 let x = (i as u32) % width;
                 let y = (i as u32) / width;
-                rgba.put_pixel(
-                    x,
-                    y,
-                    image::Rgba([chunk[0], chunk[1], chunk[2], 255]),
-                );
+                rgba.put_pixel(x, y, image::Rgba([chunk[0], chunk[1], chunk[2], 255]));
             }
             Ok(image::DynamicImage::ImageRgba8(rgba))
         }
@@ -1419,17 +1436,13 @@ mod tests {
         let (mesh, skeleton, animations) = load_skinned_mesh_data(&path).expect("load frog mesh");
         let footprint_matrix =
             skinned_footprint_matrix(&mesh.vertices, 1.0, 1.0, TARGET_NPC_HEIGHT);
-        let bones = skeleton.sample_clip(
-            animations.clips.get(FROG_IDLE).expect("idle clip"),
-            1.25,
-        );
+        let bones = skeleton.sample_clip(animations.clips.get(FROG_IDLE).expect("idle clip"), 1.25);
 
         let mut max_dist = 0.0f32;
         for v in &mesh.vertices {
             let skinned = skin_vertex_position(&bones, v.joints, v.weights, v.position);
-            let (p, w) = footprint_matrix.transform_point(Vec3::new(
-                skinned[0], skinned[1], skinned[2],
-            ));
+            let (p, w) =
+                footprint_matrix.transform_point(Vec3::new(skinned[0], skinned[1], skinned[2]));
             let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
             let dist = (p.x * inv_w).hypot(p.z * inv_w);
             max_dist = max_dist.max(dist);
@@ -1479,7 +1492,8 @@ mod tests {
         let mut min = [f32::MAX; 3];
         let mut max = [f32::MIN; 3];
         for v in &mesh.vertices {
-            let (p, w) = matrix.transform_point(Vec3::new(v.position[0], v.position[1], v.position[2]));
+            let (p, w) =
+                matrix.transform_point(Vec3::new(v.position[0], v.position[1], v.position[2]));
             let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
             let pos = [p.x * inv_w, p.y * inv_w, p.z * inv_w];
             for axis in 0..3 {
@@ -1516,9 +1530,8 @@ mod tests {
         let mut max = [f32::MIN; 3];
         for v in &mesh.vertices {
             let skinned = skin_vertex_linear(&bones, v.joints, v.weights, v.position);
-            let (p, w) = footprint_matrix.transform_point(Vec3::new(
-                skinned[0], skinned[1], skinned[2],
-            ));
+            let (p, w) =
+                footprint_matrix.transform_point(Vec3::new(skinned[0], skinned[1], skinned[2]));
             let inv_w = if w.abs() > 1e-8 { 1.0 / w } else { 1.0 };
             let pos = [p.x * inv_w, p.y * inv_w, p.z * inv_w];
             for axis in 0..3 {
@@ -1531,7 +1544,11 @@ mod tests {
             size[0] <= 1.05 && size[2] <= 1.05,
             "idle frog should stay within one tile, got size {size:?}"
         );
-        assert!(size[1] > 0.2, "frog should have visible height, got y={}", size[1]);
+        assert!(
+            size[1] > 0.2,
+            "frog should have visible height, got y={}",
+            size[1]
+        );
     }
 
     #[test]
@@ -1576,7 +1593,10 @@ mod tests {
     fn superhero_skinned_mesh_loads_all_parts() {
         let path = resolve_player_model_path().expect("player model should resolve");
         let (mesh, skeleton, _) = load_skinned_mesh_data(&path).expect("load superhero mesh");
-        assert!(mesh.vertices.len() > 1000, "expected full-body vertex count");
+        assert!(
+            mesh.vertices.len() > 1000,
+            "expected full-body vertex count"
+        );
         assert_eq!(mesh.parts.len(), 3, "hair, eyes, and body meshes");
         let index_count: usize = mesh.parts.iter().map(|p| p.indices.len()).sum();
         assert!(index_count > 1000);
@@ -1610,7 +1630,11 @@ mod tests {
         let (width, height) = compute_bounds(&mesh.vertices);
         assert!((width - 2.0).abs() < 0.05);
         assert!((height - TARGET_NPC_HEIGHT).abs() < 0.05);
-        let depth = mesh.vertices.iter().map(|v| v.position[2]).fold(0.0f32, f32::max);
+        let depth = mesh
+            .vertices
+            .iter()
+            .map(|v| v.position[2])
+            .fold(0.0f32, f32::max);
         assert!((depth - 2.0).abs() < 0.05);
     }
 
@@ -1630,7 +1654,10 @@ mod tests {
         eprintln!("sample_clip: y {:.3}..{:.3}", nmin[1], nmax[1]);
         eprintln!("in_place t=0: y {:.3}..{:.3}", imin[1], imax[1]);
         assert!(nmin[1] >= -0.1 && nmax[1] > 1.0, "normal clip upright");
-        assert!(imin[1] >= -0.1 && imax[1] > 1.0, "in_place at t=0 should match");
+        assert!(
+            imin[1] >= -0.1 && imax[1] > 1.0,
+            "in_place at t=0 should match"
+        );
     }
 
     #[test]
@@ -1638,8 +1665,8 @@ mod tests {
         use crate::animation::{load_animation_clips, PLAYER_IDLE, PLAYER_WALK};
 
         let mesh_path = resolve_player_model_path().expect("player model should resolve");
-        let anim_path =
-            resolve_model_path(DEFAULT_PLAYER_ANIMATIONS).expect("UAL1 animation library should resolve");
+        let anim_path = resolve_model_path(DEFAULT_PLAYER_ANIMATIONS)
+            .expect("UAL1 animation library should resolve");
         let (mesh, skeleton, _) = load_skinned_mesh_data(&mesh_path).expect("load superhero mesh");
         let clips = load_animation_clips(&anim_path).expect("load clips");
 
@@ -1656,7 +1683,12 @@ mod tests {
                 skeleton.sample_clip_in_place(clip, t, crate::animation::PLAYER_ROOT_NODE)
             };
             let (min, max) = skinned_bounds_from_bones(&mesh.vertices, &bones);
-            eprintln!("{label}: y min={:.3} max={:.3} height={:.3}", min[1], max[1], max[1]-min[1]);
+            eprintln!(
+                "{label}: y min={:.3} max={:.3} height={:.3}",
+                min[1],
+                max[1],
+                max[1] - min[1]
+            );
             assert!(
                 min[1] >= -0.1 && max[1] > 1.0,
                 "{label} pose should be upright with feet near y=0 (min_y={:.3} max_y={:.3})",
@@ -1671,14 +1703,16 @@ mod tests {
         use crate::animation::{load_animation_clips, PLAYER_IDLE, PLAYER_WALK};
 
         let mesh_path = resolve_player_model_path().expect("player model should resolve");
-        let anim_path =
-            resolve_model_path(DEFAULT_PLAYER_ANIMATIONS).expect("UAL1 animation library should resolve");
+        let anim_path = resolve_model_path(DEFAULT_PLAYER_ANIMATIONS)
+            .expect("UAL1 animation library should resolve");
         let (mesh, skeleton, _) = load_skinned_mesh_data(&mesh_path).expect("load superhero mesh");
         let clips = load_animation_clips(&anim_path).expect("load clips");
         let idle = &clips.clips[PLAYER_IDLE];
         let walk = &clips.clips[PLAYER_WALK];
-        let idle_center =
-            skinned_mesh_center(&mesh.vertices, &skeleton.sample_clip_in_place(idle, 0.0, crate::animation::PLAYER_ROOT_NODE));
+        let idle_center = skinned_mesh_center(
+            &mesh.vertices,
+            &skeleton.sample_clip_in_place(idle, 0.0, crate::animation::PLAYER_ROOT_NODE),
+        );
         for t in [0.0, 0.25, 0.5, 0.75] {
             let walk_center = skinned_mesh_center(
                 &mesh.vertices,
@@ -1708,8 +1742,8 @@ mod tests {
         use crate::animation::{load_animation_clips, PLAYER_IDLE};
 
         let mesh_path = resolve_player_model_path().expect("player model should resolve");
-        let anim_path =
-            resolve_model_path(DEFAULT_PLAYER_ANIMATIONS).expect("UAL1 animation library should resolve");
+        let anim_path = resolve_model_path(DEFAULT_PLAYER_ANIMATIONS)
+            .expect("UAL1 animation library should resolve");
         let (mesh, skeleton, _) = load_skinned_mesh_data(&mesh_path).expect("load superhero mesh");
         let clips = load_animation_clips(&anim_path).expect("load clips");
         let idle_bones = skeleton.sample_clip(&clips.clips[PLAYER_IDLE], 0.0);

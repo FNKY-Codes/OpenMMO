@@ -299,6 +299,10 @@ impl ContentPack {
             pack.skills = load_yaml_dir(&path.join("skills"))?;
             pack.specializations = load_yaml_dir(&path.join("specializations"))?;
         }
+        // Directory order is by filename, which is meaningless for gameplay.
+        // `regions.first()` is treated as the starting region by the server
+        // (new-player spawn) and the client (initial map), so order by id.
+        pack.regions.sort_by_key(|r| r.id.0);
         Ok(pack)
     }
 
