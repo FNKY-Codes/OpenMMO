@@ -2517,21 +2517,28 @@ mod routing_tests {
         let content = openmmo_common::load_content(&path).expect("content dir");
         let mut world = GameWorld::new(content);
 
+        // HashMap iteration order is random; pick deterministically within the
+        // starting region so the player can actually path to the target.
+        let region_id = world.content.regions.first().expect("region").id;
         let (entity_id, npc_pos) = world
             .npcs
             .iter()
-            .find_map(|(eid, n)| {
+            .filter(|(_, n)| n.region_id == region_id)
+            .filter(|(_, n)| {
                 world
                     .content
                     .npc(n.npc_id)
-                    .filter(|d| d.aggro_range > 0)
-                    .map(|_| (*eid, n.position))
+                    .is_some_and(|d| d.aggro_range > 0)
             })
+            .min_by_key(|(eid, _)| eid.0)
+            .map(|(eid, n)| (*eid, n.position))
             .expect("hostile npc");
 
         let pid = PlayerId(Uuid::from_u128(1));
         let mut player = test_player(1);
-        player.position = TilePos::new(npc_pos.x + 10, npc_pos.y + 10);
+        player.region_id = region_id;
+        player.position =
+            world.find_player_spawn(region_id, TilePos::new(npc_pos.x + 10, npc_pos.y + 10));
         player.last_position = player.position;
         world.players.insert(pid, player);
 
@@ -2585,25 +2592,33 @@ mod routing_tests {
         let content = openmmo_common::load_content(&path).expect("content dir");
         let mut world = GameWorld::new(content);
 
+        // See attack_out_of_range_walks_to_enemy_then_combats: deterministic pick.
+        let region_id = world.content.regions.first().expect("region").id;
         let (entity_id, object_pos) = world
             .objects
             .iter()
-            .find_map(|(eid, obj)| {
+            .filter(|(_, obj)| obj.region_id == region_id)
+            .filter(|(_, obj)| {
                 world
                     .content
                     .object(obj.object_id)
-                    .filter(|d| d.harvest_tag == Some(HarvestTag::Timber))
-                    .map(|_| (*eid, obj.position))
+                    .is_some_and(|d| d.harvest_tag == Some(HarvestTag::Timber))
             })
+            .min_by_key(|(eid, _)| eid.0)
+            .map(|(eid, obj)| (*eid, obj.position))
             .expect("timber node");
 
         let pid = PlayerId(Uuid::from_u128(1));
         let mut player = test_player(1);
+        player.region_id = region_id;
         player.inventory.slots[0] = Some(InventorySlot {
             item_id: ItemId(9),
             quantity: 1,
         });
-        player.position = TilePos::new(object_pos.x + 10, object_pos.y + 10);
+        player.position = world.find_player_spawn(
+            region_id,
+            TilePos::new(object_pos.x + 10, object_pos.y + 10),
+        );
         player.last_position = player.position;
         world.players.insert(pid, player);
 
