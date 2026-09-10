@@ -29,12 +29,14 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
     let target_positions = entity_positions(world);
     let object_positions = object_positions(world);
     let scavenge_ticks = scavenge_ticks_by_entity(world);
+    let station_entities = station_entities(world);
     let player_ids: Vec<PlayerId> = world.players.keys().copied().collect();
     for player_id in player_ids {
         let mut retry_attack: Option<(EntityId, openmmo_common::CombatStyle)> = None;
         let mut retry_scavenge: Option<(EntityId, TilePos)> = None;
         let mut retry_talk: Option<(EntityId, TilePos)> = None;
         let mut pending_talks: Vec<(PlayerId, EntityId)> = Vec::new();
+        let mut pending_stations: Vec<(PlayerId, EntityId)> = Vec::new();
         let content = &world.content;
         let npcs = &world.npcs;
         let boss = &world.boss;
@@ -77,13 +79,23 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                                 try_begin_combat_from_walk(content, npcs, boss, player, target);
                             } else if let Some(object_entity) = *scavenge_target {
                                 let object_pos = object_positions.get(&object_entity).copied();
-                                let ticks = scavenge_ticks.get(&object_entity).copied();
-                                try_begin_scavenge_from_walk(
-                                    player,
-                                    object_entity,
-                                    object_pos,
-                                    ticks,
-                                );
+                                if station_entities.contains(&object_entity) {
+                                    // Stations open an interface once adjacent.
+                                    if object_pos.is_some_and(|p| {
+                                        player.position.chebyshev_distance(&p) <= 1
+                                    }) {
+                                        player.action = PlayerAction::Idle;
+                                        pending_stations.push((player_id, object_entity));
+                                    }
+                                } else {
+                                    let ticks = scavenge_ticks.get(&object_entity).copied();
+                                    try_begin_scavenge_from_walk(
+                                        player,
+                                        object_entity,
+                                        object_pos,
+                                        ticks,
+                                    );
+                                }
                             } else if let Some(npc_entity) = *talk_target {
                                 let npc_pos = target_positions.get(&npc_entity).copied();
                                 if try_complete_talk_from_walk(player, npc_entity, npc_pos) {
@@ -99,6 +111,17 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
                     }
                 } else if let Some(object_entity) = *scavenge_target {
                     let object_pos = object_positions.get(&object_entity).copied();
+                    if station_entities.contains(&object_entity) {
+                        if object_pos.is_some_and(|p| player.position.chebyshev_distance(&p) <= 1) {
+                            player.action = PlayerAction::Idle;
+                            pending_stations.push((player_id, object_entity));
+                        } else if let Some(pos) = object_pos {
+                            retry_scavenge = Some((object_entity, pos));
+                        } else {
+                            player.action = PlayerAction::Idle;
+                        }
+                        continue;
+                    }
                     let ticks = scavenge_ticks.get(&object_entity).copied();
                     try_begin_scavenge_from_walk(player, object_entity, object_pos, ticks);
                     if !matches!(player.action, PlayerAction::Scavenging { .. }) {
@@ -137,6 +160,11 @@ pub fn process_tick(world: &mut GameWorld) -> Vec<(MessageTarget, ServerMessage)
         }
         for (pid, npc_entity) in pending_talks {
             for msg in crate::quest::handle_talk_to_npc(world, pid, npc_entity) {
+                messages.push((MessageTarget::Player(pid), msg));
+            }
+        }
+        for (pid, object_entity) in pending_stations {
+            if let Some(msg) = station_open_message(world, object_entity) {
                 messages.push((MessageTarget::Player(pid), msg));
             }
         }
@@ -374,6 +402,24 @@ pub fn handle_client_message(
         ClientMessage::ModeratorCommand { command } => {
             out.extend(
                 crate::anticheat::handle_mod_command(world, player_id, command)
+                    .into_iter()
+                    .map(route),
+            );
+        }
+        ClientMessage::ShopSell {
+            shop_id,
+            inv_slot,
+            quantity,
+        } => {
+            out.extend(
+                handle_shop_sell(world, player_id, &shop_id, inv_slot, quantity)
+                    .into_iter()
+                    .map(route),
+            );
+        }
+        ClientMessage::UseItem { inv_slot } => {
+            out.extend(
+                handle_use_item(world, player_id, inv_slot)
                     .into_iter()
                     .map(route),
             );
@@ -886,6 +932,32 @@ fn handle_scavenge(
         Some(p) => p,
         None => return Vec::new(),
     };
+    // Stations (bank chest, furnace, ...) aren't harvested: walk up and open
+    // the interface. No level or tool checks apply.
+    if def.station.is_some() {
+        if player.position.chebyshev_distance(&obj.position) <= 1 {
+            return station_open_message(world, object_entity)
+                .into_iter()
+                .collect();
+        }
+        let player_pos = player.position;
+        let walkable = world.walkable_for_player(player_id);
+        let path = find_attack_path(player_pos, obj.position, &walkable);
+        if let Some(player) = world.players.get_mut(&player_id) {
+            if path.len() > 1 {
+                player.action = PlayerAction::Walking {
+                    path,
+                    index: 0,
+                    attack_target: None,
+                    attack_style: None,
+                    scavenge_target: Some(object_entity),
+                    talk_target: None,
+                };
+                player.ticks_stationary = 0;
+            }
+        }
+        return Vec::new();
+    }
     if player.skills.level(Skill::Scavenging) < def.scavenging_level {
         return vec![ServerMessage::Error {
             message: format!("Need Scavenging level {}", def.scavenging_level),
@@ -944,6 +1016,165 @@ fn handle_scavenge(
     Vec::new()
 }
 
+/// Entities of every placed station object, for the walk-arrival check.
+fn station_entities(world: &GameWorld) -> std::collections::HashSet<EntityId> {
+    world
+        .objects
+        .values()
+        .filter(|o| {
+            world
+                .content
+                .object(o.object_id)
+                .is_some_and(|d| d.station.is_some())
+        })
+        .map(|o| o.entity_id)
+        .collect()
+}
+
+/// Is the player standing next to (or on) a station of this kind?
+pub fn near_station(
+    world: &GameWorld,
+    player_id: PlayerId,
+    station: openmmo_common::StationTag,
+) -> bool {
+    let Some(player) = world.players.get(&player_id) else {
+        return false;
+    };
+    world.objects.values().any(|o| {
+        o.region_id == player.region_id
+            && player.position.chebyshev_distance(&o.position) <= 1
+            && world
+                .content
+                .object(o.object_id)
+                .is_some_and(|d| d.station == Some(station))
+    })
+}
+
+fn station_name(station: openmmo_common::StationTag) -> &'static str {
+    use openmmo_common::StationTag as S;
+    match station {
+        S::Bank => "bank chest",
+        S::Furnace => "furnace",
+        S::Anvil => "anvil",
+        S::Workbench => "workbench",
+        S::Cooking => "cookfire",
+        S::Market => "trade board",
+    }
+}
+
+fn station_open_message(world: &GameWorld, object_entity: EntityId) -> Option<ServerMessage> {
+    let obj = world.objects.get(&object_entity)?;
+    let station = world.content.object(obj.object_id)?.station?;
+    Some(ServerMessage::StationOpen {
+        station,
+        position: obj.position,
+    })
+}
+
+/// Sell items from an inventory slot to a shop at the item's base value.
+fn handle_shop_sell(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    shop_id: &str,
+    inv_slot: usize,
+    quantity: u32,
+) -> Vec<ServerMessage> {
+    if world.content.shops.iter().all(|s| s.id != shop_id) {
+        return vec![ServerMessage::Error {
+            message: "Unknown shop".into(),
+        }];
+    }
+    let currency = ItemId(1);
+    let Some(player) = world.players.get_mut(&player_id) else {
+        return Vec::new();
+    };
+    let Some(Some(slot)) = player.inventory.slots.get(inv_slot).cloned() else {
+        return vec![ServerMessage::Error {
+            message: "Nothing to sell".into(),
+        }];
+    };
+    if slot.item_id == currency {
+        return vec![ServerMessage::Error {
+            message: "That's already Scrap.".into(),
+        }];
+    }
+    let Some(def) = world.content.item(slot.item_id).cloned() else {
+        return Vec::new();
+    };
+    let sell = quantity.clamp(1, slot.quantity);
+    let unit = def.alchemy_value.max(1);
+    let total = unit.saturating_mul(sell);
+    if let Some(s) = player.inventory.slots[inv_slot].as_mut() {
+        s.quantity -= sell;
+        if s.quantity == 0 {
+            player.inventory.slots[inv_slot] = None;
+        }
+    }
+    let leftover = player.inventory.add_item(currency, total, true);
+    if leftover > 0 {
+        // No room for the Scrap stack: refund the goods.
+        let _ = player.inventory.add_item(slot.item_id, sell, def.stackable);
+        return vec![ServerMessage::Error {
+            message: "Inventory full".into(),
+        }];
+    }
+    vec![
+        inventory_update(player),
+        ServerMessage::Notice {
+            message: format!("You sell {} x{} for {} Scrap.", def.name, sell, total),
+        },
+    ]
+}
+
+/// Use an item on itself. Food heals; everything else does nothing yet.
+fn handle_use_item(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    inv_slot: usize,
+) -> Vec<ServerMessage> {
+    let Some(player) = world.players.get_mut(&player_id) else {
+        return Vec::new();
+    };
+    let Some(Some(slot)) = player.inventory.slots.get(inv_slot).cloned() else {
+        return Vec::new();
+    };
+    let Some(def) = world.content.item(slot.item_id).cloned() else {
+        return Vec::new();
+    };
+    if def.heals == 0 {
+        return vec![ServerMessage::Notice {
+            message: "Nothing interesting happens.".into(),
+        }];
+    }
+    if player.hp >= player.max_hp {
+        return vec![ServerMessage::Notice {
+            message: "You're not hurt.".into(),
+        }];
+    }
+    if let Some(s) = player.inventory.slots[inv_slot].as_mut() {
+        s.quantity -= 1;
+        if s.quantity == 0 {
+            player.inventory.slots[inv_slot] = None;
+        }
+    }
+    let before = player.hp;
+    player.hp = (player.hp + def.heals).min(player.max_hp);
+    let healed = player.hp - before;
+    vec![
+        inventory_update(player),
+        ServerMessage::PlayerUpdate {
+            player_id,
+            position: player.position,
+            hp: player.hp,
+            max_hp: player.max_hp,
+            action: player.action.clone(),
+        },
+        ServerMessage::Notice {
+            message: format!("You eat the {}. It heals {healed}.", def.name),
+        },
+    ]
+}
+
 fn handle_refine(
     world: &mut GameWorld,
     player_id: PlayerId,
@@ -957,6 +1188,16 @@ fn handle_refine(
             }];
         }
     };
+    if let Some(station) = recipe.station {
+        if !near_station(world, player_id, station) {
+            return vec![ServerMessage::Error {
+                message: format!(
+                    "You need to be at a {} to make that.",
+                    station_name(station)
+                ),
+            }];
+        }
+    }
     let player = match world.players.get_mut(&player_id) {
         Some(p) => p,
         None => return Vec::new(),
@@ -1186,6 +1427,11 @@ fn handle_bank_deposit(
     inv_slot: usize,
     quantity: u32,
 ) -> Vec<ServerMessage> {
+    if !near_station(world, player_id, openmmo_common::StationTag::Bank) {
+        return vec![ServerMessage::Error {
+            message: "You need to be at a bank chest.".into(),
+        }];
+    }
     let player = match world.players.get_mut(&player_id) {
         Some(p) => p,
         None => return Vec::new(),
@@ -1219,6 +1465,11 @@ fn handle_bank_withdraw(
     bank_slot: usize,
     quantity: u32,
 ) -> Vec<ServerMessage> {
+    if !near_station(world, player_id, openmmo_common::StationTag::Bank) {
+        return vec![ServerMessage::Error {
+            message: "You need to be at a bank chest.".into(),
+        }];
+    }
     let player = match world.players.get_mut(&player_id) {
         Some(p) => p,
         None => return Vec::new(),
@@ -2060,6 +2311,14 @@ fn handle_equip(world: &mut GameWorld, player_id: PlayerId, inv_slot: usize) -> 
         Some(p) => p,
         None => return Vec::new(),
     };
+    if player.skills.level(Skill::Combat) < def.equip_level {
+        return vec![ServerMessage::Error {
+            message: format!(
+                "You need Combat level {} to equip the {}.",
+                def.equip_level, def.name
+            ),
+        }];
+    }
     let removed = player.inventory.slots[inv_slot].take();
     let Some(removed) = removed else {
         return Vec::new();
@@ -2418,6 +2677,7 @@ mod routing_tests {
         let mut world = GameWorld::new(openmmo_common::ContentPack::default());
         let pid = PlayerId(Uuid::from_u128(1));
         world.players.insert(pid, test_player(1));
+        world.place_station_near(pid, openmmo_common::StationTag::Bank);
         let msgs = handle_client_message(
             &mut world,
             pid,

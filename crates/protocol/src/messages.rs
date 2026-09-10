@@ -64,6 +64,16 @@ pub enum ClientMessage {
         item_id: ItemId,
         quantity: u32,
     },
+    /// Sell `quantity` from an inventory slot to a shop for Scrap.
+    ShopSell {
+        shop_id: String,
+        inv_slot: usize,
+        quantity: u32,
+    },
+    /// Use an inventory item on itself: eat food, etc.
+    UseItem {
+        inv_slot: usize,
+    },
     Chat {
         channel: ChatChannel,
         message: String,
@@ -224,6 +234,16 @@ pub enum ServerMessage {
         shop_id: String,
         stock: Vec<openmmo_common::ShopStock>,
     },
+    /// The player reached a station object (bank chest, furnace, ...): open
+    /// its interface. `position` lets the client close it on walking away.
+    StationOpen {
+        station: openmmo_common::StationTag,
+        position: TilePos,
+    },
+    /// Informational game text ("You eat the minnow. It heals 3.").
+    Notice {
+        message: String,
+    },
     TradeUpdate {
         partner: String,
         their_items: Vec<openmmo_common::InventorySlot>,
@@ -331,6 +351,12 @@ mod tests {
             price_per: 10,
             is_buy: false,
         });
+        roundtrip_client(ClientMessage::ShopSell {
+            shop_id: "general_store".into(),
+            inv_slot: 3,
+            quantity: 2,
+        });
+        roundtrip_client(ClientMessage::UseItem { inv_slot: 1 });
         roundtrip_client(ClientMessage::Ping);
         roundtrip_client(ClientMessage::ModeratorCommand {
             command: ModCommand::Teleport {
@@ -366,6 +392,13 @@ mod tests {
         roundtrip_server(ServerMessage::ChatMessage {
             channel: ChatChannel::Local,
             from: "Alice".into(),
+            message: "hi".into(),
+        });
+        roundtrip_server(ServerMessage::StationOpen {
+            station: openmmo_common::StationTag::Bank,
+            position: TilePos::new(3, 4),
+        });
+        roundtrip_server(ServerMessage::Notice {
             message: "hi".into(),
         });
         roundtrip_server(ServerMessage::Pong);

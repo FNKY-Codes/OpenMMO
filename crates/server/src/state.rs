@@ -483,6 +483,43 @@ pub fn world_channel() -> broadcast::Sender<String> {
 }
 
 #[cfg(test)]
+impl GameWorld {
+    /// Place a station object of `station` on the tile east of `player_id`,
+    /// registering a matching object definition if the content lacks one.
+    /// Bank, market and station-bound recipes require adjacency.
+    pub fn place_station_near(&mut self, player_id: PlayerId, station: openmmo_common::StationTag) {
+        let Some((pos, region_id)) = self
+            .players
+            .get(&player_id)
+            .map(|p| (p.position, p.region_id))
+        else {
+            return;
+        };
+        let object_id = ObjectId(9000 + station as u32);
+        if self.content.object(object_id).is_none() {
+            self.content.objects.push(openmmo_common::ObjectDef {
+                id: object_id,
+                name: format!("Test {station:?}"),
+                station: Some(station),
+                ..Default::default()
+            });
+        }
+        let eid = self.alloc_entity();
+        self.objects.insert(
+            eid,
+            ObjectState {
+                entity_id: eid,
+                object_id,
+                position: TilePos::new(pos.x + 1, pos.y),
+                depleted: false,
+                respawn_ticks: 0,
+                region_id,
+            },
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use openmmo_common::{ContentPack, RegionDef, RegionTransition, TilePos};
