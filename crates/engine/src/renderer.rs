@@ -392,14 +392,7 @@ impl Renderer {
                 continue;
             };
             let footprint = NpcFootprint::from_def(npc_def);
-            match load_skinned_npc_model(
-                &device,
-                &queue,
-                format,
-                npc_def.id,
-                &path,
-                footprint,
-            ) {
+            match load_skinned_npc_model(&device, &queue, format, npc_def.id, &path, footprint) {
                 Ok(model) => {
                     eprintln!(
                         "OpenMMO: loaded skinned NPC model for {} from {}",
@@ -709,8 +702,7 @@ impl Renderer {
         self.scratch_transparent_draws = transparent_draws;
         self.scratch_model_draws = model_draws;
 
-        let total_vertices =
-            self.tile_vertex_count as usize + self.scratch_upload.len();
+        let total_vertices = self.tile_vertex_count as usize + self.scratch_upload.len();
         self.ensure_vertex_buffer_capacity(total_vertices);
         if self.tiles_need_upload {
             self.upload_tile_vertices();
@@ -797,13 +789,7 @@ impl Renderer {
                                 &model.animations,
                                 model.root_motion_node,
                             );
-                            model.draw_one(
-                                &mut render_pass,
-                                &self.gpu.queue,
-                                vp,
-                                draw,
-                                &bones,
-                            );
+                            model.draw_one(&mut render_pass, &self.gpu.queue, vp, draw, &bones);
                         }
                     }
                 }
@@ -819,28 +805,17 @@ impl Renderer {
                             let Some(entity_id) = draw.entity_id else {
                                 continue;
                             };
-                            let player = npc_animations.entry(entity_id).or_insert_with(|| {
-                                AnimationPlayer::new(FROG_IDLE)
-                            });
-                            update_skinned_npc_clip(
-                                player,
-                                movement_interp,
-                                entity_id,
-                                now,
-                            );
+                            let player = npc_animations
+                                .entry(entity_id)
+                                .or_insert_with(|| AnimationPlayer::new(FROG_IDLE));
+                            update_skinned_npc_clip(player, movement_interp, entity_id, now);
                             player.advance(dt, &model.animations);
                             let bones = player.bone_matrices(
                                 &model.skeleton,
                                 &model.animations,
                                 model.root_motion_node,
                             );
-                            model.draw_one(
-                                &mut render_pass,
-                                &self.gpu.queue,
-                                vp,
-                                draw,
-                                &bones,
-                            );
+                            model.draw_one(&mut render_pass, &self.gpu.queue, vp, draw, &bones);
                         }
                     }
                 }

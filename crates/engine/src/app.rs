@@ -6,7 +6,9 @@ use egui_wgpu::wgpu;
 use egui_wgpu::Renderer as EguiRenderer;
 use egui_winit::winit;
 use egui_winit::State as EguiWinitState;
-use openmmo_common::{ContentPack, EntityKind, Equipment, NpcFootprint, RegionDef, RegionId, TilePos, WorldEntity};
+use openmmo_common::{
+    ContentPack, EntityKind, Equipment, NpcFootprint, RegionDef, RegionId, TilePos, WorldEntity,
+};
 use openmmo_protocol::{ClientMessage, ServerMessage};
 
 use egui_winit::egui;
@@ -522,9 +524,7 @@ impl EngineApp {
 
     fn entity_footprint(&self, entity: &WorldEntity) -> Option<NpcFootprint> {
         match &entity.kind {
-            EntityKind::Npc { npc_id, .. } => {
-                self.content.npc(*npc_id).map(NpcFootprint::from_def)
-            }
+            EntityKind::Npc { npc_id, .. } => self.content.npc(*npc_id).map(NpcFootprint::from_def),
             _ => None,
         }
     }
@@ -592,9 +592,8 @@ impl EngineApp {
         }
         // Only drop entities in the current region that are missing from this delta.
         // Entities in other regions (if any) are left untouched.
-        self.entities.retain(|e| {
-            e.region_id != region_id || ids.contains(&e.entity_id)
-        });
+        self.entities
+            .retain(|e| e.region_id != region_id || ids.contains(&e.entity_id));
         let live: std::collections::HashSet<_> =
             self.entities.iter().map(|e| e.entity_id).collect();
         self.movement_interp.prune(&live);
@@ -622,9 +621,7 @@ impl EngineApp {
             .or_else(|| {
                 entity_bounds::entity_tile(entity).map(|tile| {
                     let surface_y = entity_bounds::tile_surface_height(tile, self.region.as_ref());
-                    footprint
-                        .unwrap_or_default()
-                        .world_center(tile, surface_y)
+                    footprint.unwrap_or_default().world_center(tile, surface_y)
                 })
             })?;
         let yaw = self
@@ -782,13 +779,11 @@ impl EngineApp {
                 } else if let Some(position) = entity_bounds::entity_tile(entity) {
                     let surface_y =
                         entity_bounds::tile_surface_height(position, self.region.as_ref());
-                    renderer
-                        .camera_mut()
-                        .center_on_world(
-                            position.x as f32 + 0.5,
-                            surface_y,
-                            position.y as f32 + 0.5,
-                        );
+                    renderer.camera_mut().center_on_world(
+                        position.x as f32 + 0.5,
+                        surface_y,
+                        position.y as f32 + 0.5,
+                    );
                 }
             }
         }

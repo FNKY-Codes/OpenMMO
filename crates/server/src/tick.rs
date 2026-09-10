@@ -1,4 +1,7 @@
-use openmmo_common::{ContentPack, EntityId, EquipSlot, HarvestTag, ItemId, BossState, NpcState, PlayerAction, PlayerId, PlayerState, RegionId, Skill, TilePos, ToolTag};
+use openmmo_common::{
+    BossState, ContentPack, EntityId, EquipSlot, HarvestTag, ItemId, NpcState, PlayerAction,
+    PlayerId, PlayerState, RegionId, Skill, TilePos, ToolTag,
+};
 use openmmo_protocol::{ChatChannel, ClientMessage, LedgerContract, ServerMessage};
 use rand::Rng;
 
@@ -346,7 +349,11 @@ pub fn handle_client_message(
         } => {
             out.extend(
                 crate::quest::handle_dialogue_select(
-                    world, player_id, npc_entity, &dialogue_id, option_index,
+                    world,
+                    player_id,
+                    npc_entity,
+                    &dialogue_id,
+                    option_index,
                 )
                 .into_iter()
                 .map(route),
@@ -625,7 +632,14 @@ fn try_begin_combat_from_walk(
     if walk_target != target {
         return;
     }
-    if !player_in_melee_range(content, npcs, boss, player.region_id, player.position, target) {
+    if !player_in_melee_range(
+        content,
+        npcs,
+        boss,
+        player.region_id,
+        player.position,
+        target,
+    ) {
         return;
     }
     player.action = PlayerAction::Combat {
@@ -641,7 +655,10 @@ fn try_begin_scavenge_from_walk(
     object_pos: Option<TilePos>,
     ticks: Option<u32>,
 ) {
-    let PlayerAction::Walking { scavenge_target, .. } = &player.action else {
+    let PlayerAction::Walking {
+        scavenge_target, ..
+    } = &player.action
+    else {
         return;
     };
     if *scavenge_target != Some(object_entity) {
@@ -1314,7 +1331,9 @@ fn complete_scavenge(
         levels
     };
     if let Some(player) = world.players.get(&player_id) {
-        for msg in push_skill_xp_messages(player, Skill::Scavenging, def.scavenging_xp, levels.clone()) {
+        for msg in
+            push_skill_xp_messages(player, Skill::Scavenging, def.scavenging_xp, levels.clone())
+        {
             messages.push((MessageTarget::Player(player_id), msg));
         }
     }
@@ -1464,7 +1483,9 @@ fn tick_player_combat(
             .get(&pid)
             .zip(world.npcs.get(&target))
             .map(|(p, n)| {
-                n.alive && n.region_id == p.region_id && p.position.chebyshev_distance(&n.position) <= 1
+                n.alive
+                    && n.region_id == p.region_id
+                    && p.position.chebyshev_distance(&n.position) <= 1
             })
             .unwrap_or(false)
     };
@@ -1509,9 +1530,7 @@ fn tick_player_combat(
             push_attack_swing(messages, pid, eid, target);
         }
         if boss_target {
-            if let (Some(player), Some(boss)) =
-                (world.players.get_mut(&pid), world.boss.as_mut())
-            {
+            if let (Some(player), Some(boss)) = (world.players.get_mut(&pid), world.boss.as_mut()) {
                 if let Some(hit) = player_attack_boss(player, boss, style, content) {
                     let damage = hit.damage;
                     let xp_grants = hit.xp_grants;
@@ -1685,7 +1704,8 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                     .get(&pid)
                     .zip(world.npcs.get(&target))
                     .map(|(p, n)| {
-                        n.region_id == p.region_id && p.position.chebyshev_distance(&n.position) <= 5
+                        n.region_id == p.region_id
+                            && p.position.chebyshev_distance(&n.position) <= 5
                     })
                     .unwrap_or(false);
                 if !in_range {
@@ -1700,24 +1720,23 @@ fn tick_combat(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
                     (world.players.get_mut(&pid), world.npcs.get_mut(&target))
                 {
                     push_attack_swing(messages, pid, player_eid, target);
-                    let npc_dead =
-                        if let Some(hit) =
-                            use_gadget(player, npc, spell.max_hit, spell.xp, &content)
-                        {
-                            messages.push((
-                                MessageTarget::Player(pid),
-                                ServerMessage::Damage {
-                                    source: player_eid,
-                                    target,
-                                    amount: hit.damage,
-                                    style: openmmo_common::CombatStyle::Magic,
-                                },
-                            ));
-                            push_combat_xp(pid, player, &hit.xp_grants, messages);
-                            !npc.alive
-                        } else {
-                            false
-                        };
+                    let npc_dead = if let Some(hit) =
+                        use_gadget(player, npc, spell.max_hit, spell.xp, &content)
+                    {
+                        messages.push((
+                            MessageTarget::Player(pid),
+                            ServerMessage::Damage {
+                                source: player_eid,
+                                target,
+                                amount: hit.damage,
+                                style: openmmo_common::CombatStyle::Magic,
+                            },
+                        ));
+                        push_combat_xp(pid, player, &hit.xp_grants, messages);
+                        !npc.alive
+                    } else {
+                        false
+                    };
                     player.action = PlayerAction::Idle;
                     if npc_dead {
                         drop(player);
@@ -1765,7 +1784,10 @@ fn handle_npc_loot(
         }
     }
     if !loot.is_empty() {
-        messages.push((MessageTarget::Player(player_id), ServerMessage::LootSpawn { items: loot }));
+        messages.push((
+            MessageTarget::Player(player_id),
+            ServerMessage::LootSpawn { items: loot },
+        ));
     }
     if let Some(npc) = world.npcs.get_mut(&npc_entity) {
         npc.respawn_ticks = def.respawn_ticks;
@@ -1895,7 +1917,10 @@ fn tick_economy(world: &mut GameWorld) {
     crate::economy::match_offers(world);
 }
 
-fn tick_ledger_contracts(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerMessage)>) {
+fn tick_ledger_contracts(
+    world: &mut GameWorld,
+    messages: &mut Vec<(MessageTarget, ServerMessage)>,
+) {
     for player in world.players.values() {
         if let Some(contract) = world.economy.ledger_contracts.get(&player.id) {
             messages.push((
@@ -1915,7 +1940,10 @@ fn tick_ledger_contracts(world: &mut GameWorld, messages: &mut Vec<(MessageTarge
     }
 }
 
-fn skill_xp_messages(player: &openmmo_common::PlayerState, grants: &[XpGrant]) -> Vec<ServerMessage> {
+fn skill_xp_messages(
+    player: &openmmo_common::PlayerState,
+    grants: &[XpGrant],
+) -> Vec<ServerMessage> {
     let mut messages = Vec::new();
     let mut levels_gained = Vec::new();
     for grant in grants {
@@ -1996,11 +2024,7 @@ fn player_has_equipped_tool(
     })
 }
 
-fn handle_equip(
-    world: &mut GameWorld,
-    player_id: PlayerId,
-    inv_slot: usize,
-) -> Vec<ServerMessage> {
+fn handle_equip(world: &mut GameWorld, player_id: PlayerId, inv_slot: usize) -> Vec<ServerMessage> {
     let item_id = {
         let player = match world.players.get(&player_id) {
             Some(p) => p,
@@ -2045,7 +2069,9 @@ fn handle_equip(
             .item(prev.item_id)
             .map(|i| i.stackable)
             .unwrap_or(true);
-        let _ = player.inventory.add_item(prev.item_id, prev.quantity, stackable);
+        let _ = player
+            .inventory
+            .add_item(prev.item_id, prev.quantity, stackable);
     }
     *target = Some(removed);
     vec![inventory_update(player)]
@@ -2341,7 +2367,9 @@ fn tick_npc_ai(world: &mut GameWorld, messages: &mut Vec<(MessageTarget, ServerM
 #[cfg(test)]
 mod routing_tests {
     use super::*;
-    use openmmo_common::{Inventory, InventorySlot, ItemId, PlayerState, RegionId, SkillBook, TilePos};
+    use openmmo_common::{
+        Inventory, InventorySlot, ItemId, PlayerState, RegionId, SkillBook, TilePos,
+    };
     use uuid::Uuid;
 
     fn test_player(id: u128) -> PlayerState {
@@ -2662,9 +2690,10 @@ mod routing_tests {
         let mut received_dialogue = false;
         for _ in 0..50 {
             let tick_msgs = process_tick(&mut world);
-            if tick_msgs.iter().any(|(_, msg)| {
-                matches!(msg, ServerMessage::Dialogue { .. })
-            }) {
+            if tick_msgs
+                .iter()
+                .any(|(_, msg)| matches!(msg, ServerMessage::Dialogue { .. }))
+            {
                 let player = world.players.get(&pid).unwrap();
                 let dist = player
                     .position
@@ -2815,9 +2844,9 @@ mod routing_tests {
         world.players.insert(pid, player);
 
         let msgs = process_tick(&mut world);
-        let transitioned = msgs.iter().any(|(_, msg)| {
-            matches!(msg, ServerMessage::RegionChanged { .. })
-        });
+        let transitioned = msgs
+            .iter()
+            .any(|(_, msg)| matches!(msg, ServerMessage::RegionChanged { .. }));
 
         assert!(!transitioned);
         assert_eq!(world.players.get(&pid).unwrap().region_id, RegionId(2));
@@ -2872,9 +2901,10 @@ mod routing_tests {
 
         let combat_partner = player_combat_opponent(world.players.get(&pid).unwrap());
         if let Some(partner) = combat_partner {
-            let other_aggro = world.npcs.values().any(|n| {
-                n.aggro_target == Some(pid) && n.entity_id != partner
-            });
+            let other_aggro = world
+                .npcs
+                .values()
+                .any(|n| n.aggro_target == Some(pid) && n.entity_id != partner);
             assert!(
                 !other_aggro,
                 "npcs other than the combat partner should not aggro the player"

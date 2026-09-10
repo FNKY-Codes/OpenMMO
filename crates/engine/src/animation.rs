@@ -243,10 +243,7 @@ impl AnimationPlayer {
         clips: &AnimationSet,
         root_motion_node: Option<usize>,
     ) -> Vec<Mat4> {
-        let clip_name = self
-            .current
-            .as_deref()
-            .unwrap_or(self.idle_clip.as_str());
+        let clip_name = self.current.as_deref().unwrap_or(self.idle_clip.as_str());
         let clip = clips
             .clips
             .get(clip_name)
@@ -274,7 +271,8 @@ pub fn load_animation_set(path: &Path) -> Result<(Skeleton, AnimationSet)> {
 
 /// Load animation clips only (mesh/skin from the same file is ignored).
 pub fn load_animation_clips(path: &Path) -> Result<AnimationSet> {
-    let (document, buffers, _images) = gltf::import(path).context("failed to import animation glb")?;
+    let (document, buffers, _images) =
+        gltf::import(path).context("failed to import animation glb")?;
     let mut clips = AnimationSet::default();
     for anim in document.animations() {
         let clip = parse_animation(anim, &buffers)?;
@@ -283,11 +281,7 @@ pub fn load_animation_clips(path: &Path) -> Result<AnimationSet> {
     Ok(clips)
 }
 
-pub fn align_skeleton_to_clip(
-    skeleton: &mut Skeleton,
-    clips: &AnimationSet,
-    clip_name: &str,
-) {
+pub fn align_skeleton_to_clip(skeleton: &mut Skeleton, clips: &AnimationSet, clip_name: &str) {
     if let Some(clip) = clips.clips.get(clip_name) {
         skeleton.align_rest_pose_to_clip(clip);
     }
@@ -461,7 +455,9 @@ fn parse_skeleton(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> 
         joint_nodes.push(joint.index());
     }
 
-    if let Some(reader) = skin.reader(|buffer| Some(&buffers[buffer.index()])).read_inverse_bind_matrices()
+    if let Some(reader) = skin
+        .reader(|buffer| Some(&buffers[buffer.index()]))
+        .read_inverse_bind_matrices()
     {
         for m in reader {
             inverse_bind.push(Mat4::from_gltf(m));
@@ -498,7 +494,10 @@ fn parse_animation(anim: gltf::Animation, buffers: &[gltf::buffer::Data]) -> Res
         }
         let node = channel.target().node().index();
         let property = channel.target().property();
-        let values = match reader.read_outputs().context("animation channel missing outputs")? {
+        let values = match reader
+            .read_outputs()
+            .context("animation channel missing outputs")?
+        {
             gltf::animation::util::ReadOutputs::Translations(iter) => {
                 ChannelValues::Translations(iter.collect())
             }
@@ -601,18 +600,15 @@ fn mat4_from_trs(t: [f32; 3], r: Quat, s: [f32; 3]) -> Mat4 {
 
 fn mat4_trs(m: Mat4) -> ([f32; 3], Quat, [f32; 3]) {
     let t = [m.cols[3][0], m.cols[3][1], m.cols[3][2]];
-    let sx = (m.cols[0][0] * m.cols[0][0]
-        + m.cols[0][1] * m.cols[0][1]
-        + m.cols[0][2] * m.cols[0][2])
-        .sqrt();
-    let sy = (m.cols[1][0] * m.cols[1][0]
-        + m.cols[1][1] * m.cols[1][1]
-        + m.cols[1][2] * m.cols[1][2])
-        .sqrt();
-    let sz = (m.cols[2][0] * m.cols[2][0]
-        + m.cols[2][1] * m.cols[2][1]
-        + m.cols[2][2] * m.cols[2][2])
-        .sqrt();
+    let sx =
+        (m.cols[0][0] * m.cols[0][0] + m.cols[0][1] * m.cols[0][1] + m.cols[0][2] * m.cols[0][2])
+            .sqrt();
+    let sy =
+        (m.cols[1][0] * m.cols[1][0] + m.cols[1][1] * m.cols[1][1] + m.cols[1][2] * m.cols[1][2])
+            .sqrt();
+    let sz =
+        (m.cols[2][0] * m.cols[2][0] + m.cols[2][1] * m.cols[2][1] + m.cols[2][2] * m.cols[2][2])
+            .sqrt();
     let s = [sx.max(1e-8), sy.max(1e-8), sz.max(1e-8)];
     let inv_sx = 1.0 / s[0];
     let inv_sy = 1.0 / s[1];
@@ -669,14 +665,13 @@ mod tests {
     use std::path::PathBuf;
 
     fn frog_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../assets/models/Frog.glb")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/Frog.glb")
     }
 
     #[test]
     fn in_place_root_strip_preserves_matrix_at_t0() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../assets/models/UAL1_Standard.glb");
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/UAL1_Standard.glb");
         let (skel, clips) = load_animation_set(&path).expect("load UAL");
         let idle = &clips.clips[PLAYER_IDLE];
         let at_zero = skel.sample_clip(idle, 0.0);

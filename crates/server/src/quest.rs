@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use openmmo_common::{EntityId, HarvestTag, NpcId, PlayerId, QuestId, QuestObjective, Skill, TilePos};
+use openmmo_common::{
+    EntityId, HarvestTag, NpcId, PlayerId, QuestId, QuestObjective, Skill, TilePos,
+};
 use openmmo_protocol::ServerMessage;
 
 use crate::economy::complete_ledger_kill;
@@ -36,10 +38,7 @@ pub fn handle_talk_to_npc(
     let node = world.quests.dialogue_index.get(&dialogue_id).cloned();
     if let Some(node) = node {
         let mut out = on_talk_to_npc(world, player_id, npc_id);
-        out.push(ServerMessage::Dialogue {
-            npc_entity,
-            node,
-        });
+        out.push(ServerMessage::Dialogue { npc_entity, node });
         return out;
     }
     on_talk_to_npc(world, player_id, npc_id)
@@ -95,36 +94,61 @@ pub fn handle_dialogue_select(
     Vec::new()
 }
 
-pub fn on_harvest(world: &mut GameWorld, player_id: PlayerId, tag: Option<HarvestTag>) -> Vec<ServerMessage> {
+pub fn on_harvest(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    tag: Option<HarvestTag>,
+) -> Vec<ServerMessage> {
     let Some(tag) = tag else {
         return Vec::new();
     };
-    advance_quests(world, player_id, |obj| {
-        matches!(obj, QuestObjective::Harvest { tag: t, .. } if *t == tag)
-    })
+    advance_quests(
+        world,
+        player_id,
+        |obj| matches!(obj, QuestObjective::Harvest { tag: t, .. } if *t == tag),
+    )
 }
 
-pub fn on_refine(world: &mut GameWorld, player_id: PlayerId, recipe_id: &str) -> Vec<ServerMessage> {
+pub fn on_refine(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    recipe_id: &str,
+) -> Vec<ServerMessage> {
     let rid = recipe_id.to_string();
-    advance_quests(world, player_id, |obj| {
-        matches!(obj, QuestObjective::Refine { recipe_id, .. } if recipe_id == &rid)
-    })
+    advance_quests(
+        world,
+        player_id,
+        |obj| matches!(obj, QuestObjective::Refine { recipe_id, .. } if recipe_id == &rid),
+    )
 }
 
 pub fn on_kill(world: &mut GameWorld, player_id: PlayerId, npc_id: NpcId) -> Vec<ServerMessage> {
     complete_ledger_kill(world, player_id, npc_id);
-    advance_quests(world, player_id, |obj| {
-        matches!(obj, QuestObjective::KillNpc { npc_id: id, .. } if *id == npc_id)
-    })
+    advance_quests(
+        world,
+        player_id,
+        |obj| matches!(obj, QuestObjective::KillNpc { npc_id: id, .. } if *id == npc_id),
+    )
 }
 
-pub fn on_talk_to_npc(world: &mut GameWorld, player_id: PlayerId, npc_id: NpcId) -> Vec<ServerMessage> {
-    advance_quests(world, player_id, |obj| {
-        matches!(obj, QuestObjective::TalkToNpc { npc_id: id } if *id == npc_id)
-    })
+pub fn on_talk_to_npc(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    npc_id: NpcId,
+) -> Vec<ServerMessage> {
+    advance_quests(
+        world,
+        player_id,
+        |obj| matches!(obj, QuestObjective::TalkToNpc { npc_id: id } if *id == npc_id),
+    )
 }
 
-pub fn on_skill_level(world: &mut GameWorld, player_id: PlayerId, skill: Skill, level: u32) -> Vec<ServerMessage> {
+pub fn on_skill_level(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    skill: Skill,
+    level: u32,
+) -> Vec<ServerMessage> {
     let mut out = Vec::new();
     let quests: Vec<QuestId> = world.content.quests.iter().map(|q| q.id).collect();
     for qid in quests {
@@ -155,7 +179,11 @@ pub fn on_skill_level(world: &mut GameWorld, player_id: PlayerId, skill: Skill, 
     out
 }
 
-pub fn on_visit_tile(world: &mut GameWorld, player_id: PlayerId, position: TilePos) -> Vec<ServerMessage> {
+pub fn on_visit_tile(
+    world: &mut GameWorld,
+    player_id: PlayerId,
+    position: TilePos,
+) -> Vec<ServerMessage> {
     let mut out = Vec::new();
     let quests: Vec<QuestId> = world.content.quests.iter().map(|q| q.id).collect();
     for qid in quests {
@@ -381,7 +409,12 @@ mod tests {
         let msgs = on_talk_to_npc(&mut world, pid, NpcId(100));
         assert!(!msgs.is_empty());
         assert_eq!(
-            world.players.get(&pid).unwrap().quest_progress.get(&QuestId(1)),
+            world
+                .players
+                .get(&pid)
+                .unwrap()
+                .quest_progress
+                .get(&QuestId(1)),
             Some(&2)
         );
     }
@@ -392,7 +425,12 @@ mod tests {
         let msgs = on_harvest(&mut world, pid, Some(HarvestTag::Timber));
         assert!(!msgs.is_empty());
         assert_eq!(
-            world.players.get(&pid).unwrap().quest_progress.get(&QuestId(1)),
+            world
+                .players
+                .get(&pid)
+                .unwrap()
+                .quest_progress
+                .get(&QuestId(1)),
             Some(&3)
         );
     }
@@ -402,15 +440,13 @@ mod tests {
         let (mut world, pid) = world_with_player(1, HashMap::from([(QuestId(1), 5)]));
         let msgs = on_skill_level(&mut world, pid, Skill::Scavenging, 5);
         assert!(!msgs.is_empty());
-        assert!(
-            world
-                .players
-                .get(&pid)
-                .unwrap()
-                .quest_progress
-                .get(&QuestId(1))
-                .is_some_and(|s| *s > 5)
-        );
+        assert!(world
+            .players
+            .get(&pid)
+            .unwrap()
+            .quest_progress
+            .get(&QuestId(1))
+            .is_some_and(|s| *s > 5));
     }
 
     #[test]
@@ -445,11 +481,9 @@ mod tests {
             },
         );
         let msgs = handle_dialogue_select(&mut world, pid, entity_id, "npc_100_callings", 0);
-        assert!(
-            msgs.iter().any(|m| matches!(
-                m,
-                ServerMessage::ShopOpen { shop_id, .. } if shop_id == "starter_supplies"
-            ))
-        );
+        assert!(msgs.iter().any(|m| matches!(
+            m,
+            ServerMessage::ShopOpen { shop_id, .. } if shop_id == "starter_supplies"
+        )));
     }
 }

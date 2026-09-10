@@ -1,13 +1,11 @@
 use egui::{RichText, Ui};
-use openmmo_common::{
-    ContentPack, Equipment, Inventory, MarketOffer, Skill, SkillBook,
-};
+use openmmo_common::{ContentPack, Equipment, Inventory, MarketOffer, Skill, SkillBook};
 use openmmo_protocol::LedgerContract;
 
 use super::theme::ACCENT;
 use super::widgets::{
-    equipment_strip, item_label, item_label_by_id, item_name, item_row, recipe_tooltip,
-    skill_row, ItemRowAction,
+    equipment_strip, item_label, item_label_by_id, item_name, item_row, recipe_tooltip, skill_row,
+    ItemRowAction,
 };
 use super::{GameUi, SidePanelTab, UiAction};
 
@@ -196,7 +194,10 @@ fn draw_bank_tab(
                     .button(format!("Deposit #{}: {}", i, item_label(content, s)))
                     .clicked()
                 {
-                    action = UiAction::BankDeposit { inv_slot: i, quantity: 1 };
+                    action = UiAction::BankDeposit {
+                        inv_slot: i,
+                        quantity: 1,
+                    };
                 }
             }
         }
@@ -254,8 +255,7 @@ fn draw_skills_tab(
         if fab_level >= recipe.fabrication_level {
             any_recipe = true;
             let response = ui.button(&recipe.name);
-            let response =
-                response.on_hover_ui(|ui| recipe_tooltip(ui, content, recipe));
+            let response = response.on_hover_ui(|ui| recipe_tooltip(ui, content, recipe));
             if response.clicked() {
                 action = UiAction::Refine {
                     recipe_id: recipe.id.clone(),
@@ -358,8 +358,8 @@ fn draw_market_tab(
             }
             ui.separator();
             for item in &content.items {
-                let selected = game_ui.market_selected_inv_slot.is_none()
-                    && game_ui.market_item_id == item.id;
+                let selected =
+                    game_ui.market_selected_inv_slot.is_none() && game_ui.market_item_id == item.id;
                 if ui
                     .selectable_label(selected, format!("{} (id {})", item.name, item.id.0))
                     .clicked()

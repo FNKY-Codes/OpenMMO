@@ -48,9 +48,9 @@ impl NpcFootprint {
     }
 
     pub fn player_adjacent(self, player: TilePos, sw: TilePos) -> bool {
-        self.occupied_tiles(sw).into_iter().any(|tile| {
-            player.chebyshev_distance(&tile) <= 1
-        })
+        self.occupied_tiles(sw)
+            .into_iter()
+            .any(|tile| player.chebyshev_distance(&tile) <= 1)
     }
 
     pub fn world_center(self, sw: TilePos, surface_y: f32) -> [f32; 3] {

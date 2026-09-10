@@ -1,6 +1,6 @@
 use openmmo_common::{
-    BossState, EntityId, GroundItem, ItemId, MarketOffer, NpcId, PlayerId, QuestId, RegionId, Skill,
-    TilePos, WorldEntity,
+    BossState, EntityId, GroundItem, ItemId, MarketOffer, NpcId, PlayerId, QuestId, RegionId,
+    Skill, TilePos, WorldEntity,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

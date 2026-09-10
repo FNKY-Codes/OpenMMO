@@ -130,9 +130,7 @@ impl GameUi {
                 ui.label("Character Name");
                 ui.text_edit_singleline(&mut self.character_name);
                 ui.label("Password");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.password).password(true),
-                );
+                ui.add(egui::TextEdit::singleline(&mut self.password).password(true));
                 ui.separator();
                 ui.label(&self.status);
                 if ui.button("Connect").clicked() {
@@ -162,16 +160,14 @@ impl GameUi {
         let mut action = UiAction::None;
 
         let now = Instant::now();
-        self.xp_drops.retain(|(_, _, at)| now.duration_since(*at).as_secs_f32() < 1.5);
+        self.xp_drops
+            .retain(|(_, _, at)| now.duration_since(*at).as_secs_f32() < 1.5);
 
         for (skill, amount, _) in &self.xp_drops {
             egui::Area::new(egui::Id::new(format!("xp_{skill}_{amount}")))
                 .anchor(egui::Align2::CENTER_TOP, [0.0, 40.0])
                 .show(ctx, |ui| {
-                    ui.label(
-                        RichText::new(format!("+{amount} {skill} XP"))
-                            .color(theme::ACCENT),
-                    );
+                    ui.label(RichText::new(format!("+{amount} {skill} XP")).color(theme::ACCENT));
                 });
         }
 
@@ -326,10 +322,7 @@ impl GameUi {
                     for item in &stock {
                         let name = widgets::item_name(content, item.item_id);
                         if ui
-                            .button(format!(
-                                "Buy {name} x{} for {}",
-                                item.quantity, item.price
-                            ))
+                            .button(format!("Buy {name} x{} for {}", item.quantity, item.price))
                             .clicked()
                         {
                             action = UiAction::ShopBuy {
@@ -384,7 +377,8 @@ pub fn draw_combat_health_bars(
         let Some((hp, max_hp)) = entity_hp(entity) else {
             continue;
         };
-        let Some(anchor) = entity_health_anchor(entity, movement_interp, region, content, now) else {
+        let Some(anchor) = entity_health_anchor(entity, movement_interp, region, content, now)
+        else {
             continue;
         };
         let Some((screen_x, screen_y)) =
@@ -424,7 +418,9 @@ fn entity_health_anchor(
 ) -> Option<Vec3> {
     let (_, height) = entity_bounds::entity_cube_dims(&entity.kind);
     let footprint = match &entity.kind {
-        EntityKind::Npc { npc_id, .. } => content.npc(*npc_id).map(openmmo_common::NpcFootprint::from_def),
+        EntityKind::Npc { npc_id, .. } => content
+            .npc(*npc_id)
+            .map(openmmo_common::NpcFootprint::from_def),
         _ => None,
     };
     let [cx, surface_y, cz] =
@@ -442,9 +438,17 @@ pub enum UiAction {
     DropItem(usize),
     EquipItem(usize),
     UnequipItem(openmmo_common::EquipSlot),
-    BankDeposit { inv_slot: usize, quantity: u32 },
-    BankWithdraw { bank_slot: usize, quantity: u32 },
-    Refine { recipe_id: String },
+    BankDeposit {
+        inv_slot: usize,
+        quantity: u32,
+    },
+    BankWithdraw {
+        bank_slot: usize,
+        quantity: u32,
+    },
+    Refine {
+        recipe_id: String,
+    },
     DialogueSelect {
         npc_entity: openmmo_common::EntityId,
         dialogue_id: String,

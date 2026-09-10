@@ -38,9 +38,9 @@ fn find_trade_session<'a>(
     a: PlayerId,
     b: PlayerId,
 ) -> Option<&'a mut TradeSession> {
-    trades.values_mut().find(|s| {
-        (s.player_a == a && s.player_b == b) || (s.player_a == b && s.player_b == a)
-    })
+    trades
+        .values_mut()
+        .find(|s| (s.player_a == a && s.player_b == b) || (s.player_a == b && s.player_b == a))
 }
 
 #[allow(dead_code)]
@@ -464,7 +464,9 @@ pub fn complete_ledger_kill(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openmmo_common::{ContentPack, Inventory, ItemId, PlayerState, RegionId, SkillBook, TilePos};
+    use openmmo_common::{
+        ContentPack, Inventory, ItemId, PlayerState, RegionId, SkillBook, TilePos,
+    };
 
     use uuid::Uuid;
 
@@ -545,61 +547,75 @@ mod tests {
         world.players.insert(buyer_id, buyer_state);
         world.players.insert(seller_id, test_player(2, "seller"));
 
-        world.economy.market_offers.push(openmmo_common::MarketOffer {
-            id: Uuid::new_v4(),
-            player_name: "buyer".into(),
-            item_id: ItemId(2),
-            quantity: 5,
-            price_per: 20,
-            is_buy: true,
-            created_tick: 0,
-        });
-        world.economy.market_offers.push(openmmo_common::MarketOffer {
-            id: Uuid::new_v4(),
-            player_name: "seller".into(),
-            item_id: ItemId(2),
-            quantity: 5,
-            price_per: 15,
-            is_buy: false,
-            created_tick: 0,
-        });
+        world
+            .economy
+            .market_offers
+            .push(openmmo_common::MarketOffer {
+                id: Uuid::new_v4(),
+                player_name: "buyer".into(),
+                item_id: ItemId(2),
+                quantity: 5,
+                price_per: 20,
+                is_buy: true,
+                created_tick: 0,
+            });
+        world
+            .economy
+            .market_offers
+            .push(openmmo_common::MarketOffer {
+                id: Uuid::new_v4(),
+                player_name: "seller".into(),
+                item_id: ItemId(2),
+                quantity: 5,
+                price_per: 15,
+                is_buy: false,
+                created_tick: 0,
+            });
 
         match_offers(&mut world);
         assert!(world.economy.market_offers.is_empty());
         let buyer = world.players.get(&buyer_id).unwrap();
-        assert!(
-            buyer
-                .inventory
-                .slots
-                .iter()
-                .flatten()
-                .any(|s| s.item_id == ItemId(2))
-        );
+        assert!(buyer
+            .inventory
+            .slots
+            .iter()
+            .flatten()
+            .any(|s| s.item_id == ItemId(2)));
     }
 
     #[test]
     fn match_offers_skips_when_buy_price_too_low() {
         let mut world = GameWorld::new(ContentPack::default());
-        world.players.insert(PlayerId(Uuid::from_u128(1)), test_player(1, "buyer"));
-        world.players.insert(PlayerId(Uuid::from_u128(2)), test_player(2, "seller"));
-        world.economy.market_offers.push(openmmo_common::MarketOffer {
-            id: Uuid::new_v4(),
-            player_name: "buyer".into(),
-            item_id: ItemId(2),
-            quantity: 1,
-            price_per: 5,
-            is_buy: true,
-            created_tick: 0,
-        });
-        world.economy.market_offers.push(openmmo_common::MarketOffer {
-            id: Uuid::new_v4(),
-            player_name: "seller".into(),
-            item_id: ItemId(2),
-            quantity: 1,
-            price_per: 10,
-            is_buy: false,
-            created_tick: 0,
-        });
+        world
+            .players
+            .insert(PlayerId(Uuid::from_u128(1)), test_player(1, "buyer"));
+        world
+            .players
+            .insert(PlayerId(Uuid::from_u128(2)), test_player(2, "seller"));
+        world
+            .economy
+            .market_offers
+            .push(openmmo_common::MarketOffer {
+                id: Uuid::new_v4(),
+                player_name: "buyer".into(),
+                item_id: ItemId(2),
+                quantity: 1,
+                price_per: 5,
+                is_buy: true,
+                created_tick: 0,
+            });
+        world
+            .economy
+            .market_offers
+            .push(openmmo_common::MarketOffer {
+                id: Uuid::new_v4(),
+                player_name: "seller".into(),
+                item_id: ItemId(2),
+                quantity: 1,
+                price_per: 10,
+                is_buy: false,
+                created_tick: 0,
+            });
         match_offers(&mut world);
         assert_eq!(world.economy.market_offers.len(), 2);
     }
@@ -635,13 +651,11 @@ mod tests {
 
         assert!(world.economy.market_offers.is_empty());
         let buyer = world.players.get(&buyer_id).unwrap();
-        assert!(
-            buyer
-                .inventory
-                .slots
-                .iter()
-                .flatten()
-                .any(|s| s.item_id == ItemId(2) && s.quantity == 5)
-        );
+        assert!(buyer
+            .inventory
+            .slots
+            .iter()
+            .flatten()
+            .any(|s| s.item_id == ItemId(2) && s.quantity == 5));
     }
 }

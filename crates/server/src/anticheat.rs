@@ -6,7 +6,9 @@ use crate::state::GameWorld;
 const MAX_WALK_PER_TICK: i32 = 1;
 
 pub fn validate_username(username: &str) -> bool {
-    !username.is_empty() && username.len() <= 32 && username.chars().all(|c| c.is_alphanumeric() || c == '_')
+    !username.is_empty()
+        && username.len() <= 32
+        && username.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 pub fn validate_walk(player: &openmmo_common::PlayerState, target: TilePos) -> bool {

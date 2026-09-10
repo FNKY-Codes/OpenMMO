@@ -168,7 +168,10 @@ fn is_local_player(
     }
 }
 
-fn npc_footprint(content: &ContentPack, entity: &openmmo_common::WorldEntity) -> Option<NpcFootprint> {
+fn npc_footprint(
+    content: &ContentPack,
+    entity: &openmmo_common::WorldEntity,
+) -> Option<NpcFootprint> {
     match &entity.kind {
         EntityKind::Npc { npc_id, .. } => content.npc(*npc_id).map(NpcFootprint::from_def),
         _ => None,
@@ -256,8 +259,7 @@ mod tests {
         let width = 800;
         let height = 600;
         let content = openmmo_common::ContentPack::default();
-        let (center, half) =
-            crate::entity_bounds::entity_aabb(&entities[0], None, None).unwrap();
+        let (center, half) = crate::entity_bounds::entity_aabb(&entities[0], None, None).unwrap();
 
         let mut found = false;
         'search: for y in (0..height).step_by(8) {
@@ -276,7 +278,8 @@ mod tests {
                 if t <= 0.0 {
                     continue;
                 }
-                let ground_hit = crate::math::ray_plane_y_intersection(origin, dir).expect("ground hit");
+                let ground_hit =
+                    crate::math::ray_plane_y_intersection(origin, dir).expect("ground hit");
                 let ground_tile =
                     TilePos::new(ground_hit.x.floor() as i32, ground_hit.z.floor() as i32);
                 if ground_tile == object_tile {
@@ -284,7 +287,9 @@ mod tests {
                 }
 
                 let picked = camera
-                    .pick_entity(x as f32, y as f32, width, height, &entities, None, None, &content)
+                    .pick_entity(
+                        x as f32, y as f32, width, height, &entities, None, None, &content,
+                    )
                     .expect("object should be picked from its mesh");
                 assert_eq!(picked, EntityId(1));
                 found = true;
@@ -303,7 +308,10 @@ mod tests {
         let player_tile = TilePos::new(32, 32);
         let object_tile = TilePos::new(33, 32);
         let local_id = PlayerId::new();
-        let entities = vec![local_player_at(player_tile, local_id), object_at(object_tile)];
+        let entities = vec![
+            local_player_at(player_tile, local_id),
+            object_at(object_tile),
+        ];
         let width = 1280;
         let height = 720;
 
@@ -368,20 +376,25 @@ mod tests {
                     continue;
                 }
                 let content = openmmo_common::ContentPack::default();
-        let (center, half) =
-            crate::entity_bounds::entity_aabb(&entities[0], None, None).unwrap();
+                let (center, half) =
+                    crate::entity_bounds::entity_aabb(&entities[0], None, None).unwrap();
                 if crate::math::ray_aabb_intersection(origin, dir, center, half).is_some() {
                     continue;
                 }
 
                 let picked = camera
-                    .pick_entity(x as f32, y as f32, width, height, &entities, None, None, &content)
+                    .pick_entity(
+                        x as f32, y as f32, width, height, &entities, None, None, &content,
+                    )
                     .expect("tile fallback should pick object on clicked tile");
                 assert_eq!(picked, EntityId(1));
                 found = true;
                 break 'search;
             }
         }
-        assert!(found, "expected a tile click that misses mesh but hits object tile");
+        assert!(
+            found,
+            "expected a tile click that misses mesh but hits object tile"
+        );
     }
 }

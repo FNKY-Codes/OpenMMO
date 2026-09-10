@@ -1,5 +1,5 @@
-use openmmo_common::TilePos;
 use openmmo_common::ContentPack;
+use openmmo_common::TilePos;
 
 use crate::camera::Camera;
 
