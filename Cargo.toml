@@ -48,6 +48,10 @@ egui = "0.30"
 egui-wgpu = "0.30"
 egui-winit = "0.30"
 tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
+# tokio-tungstenite pulls rustls with neither `ring` nor `aws-lc-rs`, so rustls
+# cannot pick a crypto provider on its own. We depend on it directly to install
+# one explicitly. `ring` over `aws-lc-rs`: no cmake/NASM needed to build on Windows.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 url = "2"
 toml = "0.8"
 openmmo-sdk = { path = "crates/sdk" }

@@ -36,6 +36,12 @@ jobs:
       - name: Build client
         run: cargo build --release -p openmmo-client
 
+      # Gate the release on the client actually reaching the live server over
+      # TLS. v0.1.0 shipped a client that panicked on every wss:// connection
+      # because nothing exercised that path before publishing.
+      - name: Verify client can reach the server over wss
+        run: cargo test -p openmmo-client --test wss_login -- --ignored --nocapture
+
       - name: Bundle
         shell: pwsh
         run: |

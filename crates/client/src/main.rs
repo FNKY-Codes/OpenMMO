@@ -59,6 +59,9 @@ fn main() -> anyhow::Result<()> {
     };
     let region = content.regions.first().cloned();
 
+    // Must happen before any wss:// connection is attempted.
+    net::install_crypto_provider();
+
     let (net_tx, net_rx) = mpsc::channel::<NetCommand>();
     let (msg_tx, msg_rx) = mpsc::channel::<ServerMessage>();
 
