@@ -16,7 +16,7 @@ env:
   CARGO_TERM_COLOR: always
   # Baked into the client as the default "Server URL" on the login screen.
   # Set the OPENMMO_SERVER_URL repository variable to override.
-  OPENMMO_SERVER_URL: ${{ vars.OPENMMO_SERVER_URL || 'wss://openmmo.up.railway.app/ws' }}
+  OPENMMO_SERVER_URL: ${{ vars.OPENMMO_SERVER_URL || 'wss://server-production-2a39.up.railway.app/ws' }}
 
 permissions:
   contents: write
