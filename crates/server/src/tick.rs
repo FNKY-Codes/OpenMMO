@@ -1483,26 +1483,34 @@ fn tick_player_combat(
             .get(&pid)
             .zip(world.npcs.get(&target))
             .map(|(p, n)| {
+                // Multi-tile NPCs are anchored at their south-west tile; test
+                // adjacency against the whole footprint, as the NPC does.
                 n.alive
                     && n.region_id == p.region_id
-                    && p.position.chebyshev_distance(&n.position) <= 1
+                    && npc_footprint(content, n.npc_id).player_adjacent(p.position, n.position)
             })
             .unwrap_or(false)
     };
 
     if !in_range {
         let target_alive = combat_target_alive(world, target, boss_target);
-        if let Some(player) = world.players.get_mut(&pid) {
-            if target_alive {
+        if !target_alive {
+            if let Some(player) = world.players.get_mut(&pid) {
+                player.action = PlayerAction::Idle;
+                player.combat_target = None;
+            }
+        } else if boss_target {
+            if let Some(player) = world.players.get_mut(&pid) {
                 player.action = PlayerAction::Combat {
                     target,
                     style,
                     player_attack_cooldown,
                 };
-            } else {
-                player.action = PlayerAction::Idle;
-                player.combat_target = None;
             }
+        } else {
+            // The target moved (or engaged us from its aggro range): close the
+            // gap instead of standing in place taking hits.
+            retry_attack_path(world, pid, target, style);
         }
         return;
     }
@@ -2575,10 +2583,10 @@ mod routing_tests {
             process_tick(&mut world);
             let player = world.players.get(&pid).unwrap();
             let in_combat = matches!(player.action, openmmo_common::PlayerAction::Combat { .. });
-            let dist = player
-                .position
-                .chebyshev_distance(&world.npcs.get(&entity_id).unwrap().position);
-            if in_combat && dist <= 1 {
+            let npc = world.npcs.get(&entity_id).unwrap();
+            let adjacent = npc_footprint(&world.content, npc.npc_id)
+                .player_adjacent(player.position, npc.position);
+            if in_combat && adjacent {
                 adjacent_and_fighting = true;
                 break;
             }
