@@ -10,10 +10,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY tools ./tools
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/app/target \
-    cargo build --release -p openmmo-server --features postgres,redis \
+RUN cargo build --release -p openmmo-server --features postgres,redis \
     && cp target/release/openmmo-server /usr/local/bin/openmmo-server
 
 FROM debian:bookworm-slim
