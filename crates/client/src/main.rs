@@ -57,6 +57,7 @@ fn main() -> anyhow::Result<()> {
             Default::default()
         }
     };
+    openmmo_engine::entity_bounds::register_object_dims(&content);
     let region = content.regions.first().cloned();
 
     // Must happen before any wss:// connection is attempted.

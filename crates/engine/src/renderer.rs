@@ -22,9 +22,9 @@ use crate::movement_interp::EntityMovementInterp;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    color: [f32; 4],
+pub(crate) struct Vertex {
+    pub(crate) position: [f32; 3],
+    pub(crate) color: [f32; 4],
 }
 
 #[repr(C)]
@@ -717,6 +717,10 @@ impl Renderer {
             );
         }
 
+        // Sky colour follows the region: bright outdoors, near-black underground.
+        let clear = region
+            .map(|r| crate::world_style::clear_color(r.ambience))
+            .unwrap_or([0.45, 0.65, 0.85]);
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("World Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -724,9 +728,9 @@ impl Renderer {
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.45,
-                        g: 0.65,
-                        b: 0.85,
+                        r: clear[0],
+                        g: clear[1],
+                        b: clear[2],
                         a: 1.0,
                     }),
                     store: wgpu::StoreOp::Store,
@@ -962,26 +966,48 @@ impl Renderer {
     }
 
     fn build_region_tiles(&self, region: &RegionDef, vertices: &mut Vec<Vertex>) {
+        use openmmo_common::TileKind;
+        let light = crate::world_style::ambient_light(region.ambience);
         for y in 0..region.height {
             for x in 0..region.width {
                 let idx = (y * region.width + x) as usize;
                 let tile_pos = TilePos::new(x as i32, y as i32);
-                let tile_type = region.tiles.get(idx).copied().unwrap_or(0);
-                let is_portal = region
-                    .transitions
-                    .iter()
-                    .any(|t| t.position.x == tile_pos.x && t.position.y == tile_pos.y);
-                let (height, color) = if is_portal {
-                    (0.18, [0.58, 0.22, 0.78, 1.0])
-                } else {
-                    match tile_type {
-                        0 => (0.12, [0.25, 0.55, 0.28, 1.0]),
-                        1 => (0.2, [0.45, 0.38, 0.25, 1.0]),
-                        2 => (0.05, [0.2, 0.35, 0.65, 1.0]),
-                        _ => (0.1, [0.35, 0.35, 0.35, 1.0]),
+                let byte = region.tiles.get(idx).copied().unwrap_or(0);
+                let kind = TileKind::from_byte(byte).unwrap_or(TileKind::Rock);
+                let style = crate::world_style::tile_style(kind, tile_pos.x, tile_pos.y);
+                let mut color = style.color;
+                for c in color.iter_mut().take(3) {
+                    *c *= light;
+                }
+                self.add_tile_block(tile_pos, style.height, color, vertices);
+            }
+        }
+
+        // Portal dressing (cave mouths, doors, stairs) is static, so it lives
+        // in the tile cache. Open toward the nearest walkable neighbour.
+        for t in &region.transitions {
+            let p = t.position;
+            let surface = crate::world_style::tile_height(
+                region.tiles[(p.y as u32 * region.width + p.x as u32) as usize],
+                p.x,
+                p.y,
+            );
+            let mut open = (0.0f32, 1.0f32);
+            for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
+                let n = TilePos::new(p.x + dx, p.y + dy);
+                if region.is_walkable(n) && region.transition_at(n).is_none() {
+                    open = (dx as f32, dy as f32);
+                    break;
+                }
+            }
+            let start = vertices.len();
+            crate::props::build_portal(t.kind, p, surface, open, vertices);
+            if light < 1.0 {
+                for v in &mut vertices[start..] {
+                    for c in v.color.iter_mut().take(3) {
+                        *c *= light;
                     }
-                };
-                self.add_tile_block(tile_pos, height, color, vertices);
+                }
             }
         }
     }
@@ -1095,18 +1121,22 @@ impl Renderer {
                         }
                     }
                 }
-                let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
-                self.add_entity_cube(
+                // No model: a procedural body keyed off the NPC archetype.
+                let light = region
+                    .map(|r| crate::world_style::ambient_light(r.ambience))
+                    .unwrap_or(1.0);
+                let archetype = content.npc(*npc_id).and_then(|d| d.archetype.as_deref());
+                let fp = footprint.unwrap_or_default();
+                // Placeholder bodies are anchored at the footprint's centre;
+                // `visual_base` already accounts for multi-tile footprints.
+                crate::props::build_npc_placeholder(
+                    archetype,
+                    fp,
                     [cx, surface_y, cz],
-                    eye,
-                    width,
-                    height,
-                    fallback_color,
+                    yaw,
+                    alive,
+                    light,
                     opaque_entity_vertices,
-                    opaque_outline_vertices,
-                    transparent_entity_vertices,
-                    transparent_outline_vertices,
-                    transparent_draws,
                 );
             }
             openmmo_common::EntityKind::Boss { hp, .. } => {
@@ -1132,23 +1162,42 @@ impl Renderer {
                     transparent_draws,
                 );
             }
-            openmmo_common::EntityKind::Object { .. } => {
+            openmmo_common::EntityKind::Object {
+                object_id,
+                position,
+                depleted,
+            } => {
                 let Some([cx, surface_y, cz]) = visual_base else {
                     return;
                 };
-                let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
-                self.add_entity_cube(
-                    [cx, surface_y, cz],
-                    eye,
-                    width,
-                    height,
-                    [0.5, 0.3, 0.15, 1.0],
-                    opaque_entity_vertices,
-                    opaque_outline_vertices,
-                    transparent_entity_vertices,
-                    transparent_outline_vertices,
-                    transparent_draws,
-                );
+                let light = region
+                    .map(|r| crate::world_style::ambient_light(r.ambience))
+                    .unwrap_or(1.0);
+                match content.object(*object_id) {
+                    Some(def) => crate::props::build_prop(
+                        def,
+                        [cx, surface_y, cz],
+                        *position,
+                        *depleted,
+                        light,
+                        opaque_entity_vertices,
+                    ),
+                    None => {
+                        let (width, height) = entity_bounds::entity_cube_dims(&entity.kind);
+                        self.add_entity_cube(
+                            [cx, surface_y, cz],
+                            eye,
+                            width,
+                            height,
+                            [0.5, 0.3, 0.15, 1.0],
+                            opaque_entity_vertices,
+                            opaque_outline_vertices,
+                            transparent_entity_vertices,
+                            transparent_outline_vertices,
+                            transparent_draws,
+                        );
+                    }
+                }
             }
             openmmo_common::EntityKind::GroundItem { .. } => {
                 let Some([cx, surface_y, cz]) = visual_base else {
@@ -1289,7 +1338,7 @@ impl Renderer {
     }
 }
 
-fn add_box(
+pub(crate) fn add_box(
     center: [f32; 3],
     size: [f32; 3],
     color: [f32; 4],
@@ -1402,7 +1451,13 @@ fn push_line(a: [f32; 3], b: [f32; 3], color: [f32; 4], vertices: &mut Vec<Verte
     vertices.push(Vertex { position: b, color });
 }
 
-fn push_tri(a: [f32; 3], b: [f32; 3], c: [f32; 3], color: [f32; 4], vertices: &mut Vec<Vertex>) {
+pub(crate) fn push_tri(
+    a: [f32; 3],
+    b: [f32; 3],
+    c: [f32; 3],
+    color: [f32; 4],
+    vertices: &mut Vec<Vertex>,
+) {
     for position in [a, b, c] {
         vertices.push(Vertex { position, color });
     }

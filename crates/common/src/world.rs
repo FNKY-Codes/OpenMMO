@@ -165,6 +165,9 @@ pub enum EntityKind {
     Object {
         object_id: crate::ObjectId,
         position: TilePos,
+        /// Harvested and waiting to respawn; drawn as a stump / bare rock.
+        #[serde(default)]
+        depleted: bool,
     },
     GroundItem {
         item_id: ItemId,

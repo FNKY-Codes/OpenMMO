@@ -320,15 +320,18 @@ impl GameWorld {
             });
         }
         for o in self.objects.values() {
-            if o.depleted || region_id.is_some_and(|r| o.region_id != r) {
+            if region_id.is_some_and(|r| o.region_id != r) {
                 continue;
             }
+            // Depleted nodes stay visible (as stumps / bare rock) so the world
+            // doesn't pop; interactions check `depleted` server-side.
             entities.push(WorldEntity {
                 entity_id: o.entity_id,
                 region_id: o.region_id,
                 kind: EntityKind::Object {
                     object_id: o.object_id,
                     position: o.position,
+                    depleted: o.depleted,
                 },
             });
         }

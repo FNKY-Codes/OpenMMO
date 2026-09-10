@@ -345,6 +345,7 @@ mod tests {
             kind: EntityKind::Object {
                 object_id: ObjectId(1),
                 position: TilePos::new(0, 1),
+                depleted: false,
             },
         };
         let menu = build_context_menu(
