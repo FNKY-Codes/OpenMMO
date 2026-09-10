@@ -7,8 +7,10 @@ pub mod math;
 pub mod mesh;
 pub mod model;
 pub mod movement_interp;
+pub mod props;
 pub mod renderer;
 pub mod ui;
+pub mod world_style;
 
 pub use app::{EngineApp, NetCommand};
 pub use camera::Camera;

@@ -226,6 +226,7 @@ mod tests {
             kind: EntityKind::Object {
                 object_id: openmmo_common::ObjectId(1),
                 position: tile,
+                depleted: false,
             },
         }
     }

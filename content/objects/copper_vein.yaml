@@ -1,8 +1,0 @@
-id: 2
-name: Copper Vein
-harvest_tag: ore
-scavenging_level: 1
-scavenging_xp: 30
-harvest_item: 4
-scavenging_ticks: 4
-depletes: true

@@ -303,6 +303,7 @@ mod tests {
             tool_tag: None,
             alchemy_value: 0,
             attack_ticks: 4,
+            ..Default::default()
         };
         let content = test_content(vec![item.clone()]);
         let player = test_player_with_gear(item, openmmo_common::EquipSlot::Weapon);
@@ -326,6 +327,7 @@ mod tests {
             tool_tag: None,
             alchemy_value: 0,
             attack_ticks: 4,
+            ..Default::default()
         };
         let content = test_content(vec![item.clone()]);
         let player = test_player_with_gear(item, openmmo_common::EquipSlot::Weapon);

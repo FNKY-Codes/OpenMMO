@@ -1,0 +1,62 @@
+# Interactive stations. Not harvestable; interacting opens an interface.
+
+- id: 10
+  name: Bank Chest
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  station: bank
+  examine: A reinforced chest. Whatever you put in stays put.
+- id: 11
+  name: Furnace
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  station: furnace
+  examine: Smelt ore into ingots here.
+- id: 12
+  name: Anvil
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  station: anvil
+  examine: Hammer ingots into weapons and armour here.
+- id: 13
+  name: Workbench
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  station: workbench
+  examine: Saw timber into planks and bolt scrap together here.
+- id: 14
+  name: Cookfire
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  station: cooking
+  examine: Cook fish here.
+- id: 15
+  name: Trade Board
+  harvest_tag: null
+  scavenging_level: 1
+  scavenging_xp: 0
+  harvest_item: null
+  scavenging_ticks: 1
+  depletes: false
+  station: market
+  examine: Buy and sell offers, pinned by other survivors.

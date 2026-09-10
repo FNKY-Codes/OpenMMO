@@ -1,0 +1,180 @@
+# Hostile NPCs, roughly in order of danger.
+# combat level ≈ max_hp/4 + prowess + fortitude
+# Item 1 = Scrap (currency).
+
+# --- Verdant Reach outskirts (levels 1-10) ----------------------------------
+- id: 4
+  name: Mutant Rat
+  max_hp: 5
+  prowess: 1
+  fortitude: 0
+  aggro_range: 0
+  respawn_ticks: 10
+  attack_ticks: 4
+  archetype: vermin
+  examine: About the size of a dog. Won't bother you unless you bother it.
+  loot_table:
+    - { item_id: 1, min_qty: 1, max_qty: 2, rate: 0.9 }
+- id: 1
+  name: Mutant Tiger
+  max_hp: 8
+  prowess: 2
+  fortitude: 1
+  aggro_range: 3
+  footprint_w: 2
+  footprint_h: 2
+  respawn_ticks: 15
+  attack_ticks: 3
+  archetype: beast
+  examine: Striped, hungry, and wrong in the eyes.
+  loot_table:
+    - { item_id: 1, min_qty: 1, max_qty: 3, rate: 0.8 }
+    - { item_id: 6, min_qty: 1, max_qty: 1, rate: 0.3 }
+- id: 5
+  name: Scrap Hound
+  max_hp: 14
+  prowess: 4
+  fortitude: 2
+  aggro_range: 3
+  respawn_ticks: 18
+  attack_ticks: 3
+  archetype: beast
+  examine: A dog wearing bits of an old car. It growls through a grille.
+  loot_table:
+    - { item_id: 1, min_qty: 2, max_qty: 4, rate: 0.9 }
+    - { item_id: 31, min_qty: 1, max_qty: 1, rate: 0.05 }
+- id: 2
+  name: Ridge Bandit
+  max_hp: 18
+  prowess: 5
+  fortitude: 3
+  aggro_range: 4
+  respawn_ticks: 25
+  attack_ticks: 4
+  archetype: bandit
+  examine: Cut-throat from the ridge camps. Keeps what it takes.
+  loot_table:
+    - { item_id: 1, min_qty: 3, max_qty: 6, rate: 0.9 }
+    - { item_id: 8, min_qty: 1, max_qty: 1, rate: 0.08 }
+    - { item_id: 32, min_qty: 1, max_qty: 1, rate: 0.05 }
+    - { item_id: 48, min_qty: 1, max_qty: 1, rate: 0.02 }
+- id: 3
+  name: Hollow Wisp
+  model: frog
+  max_hp: 12
+  prowess: 4
+  fortitude: 2
+  aggro_range: 4
+  respawn_ticks: 20
+  attack_ticks: 3
+  archetype: wisp
+  examine: A knot of pale light that hums. It is not friendly.
+  loot_table:
+    - { item_id: 1, min_qty: 1, max_qty: 3, rate: 1.0 }
+    - { item_id: 47, min_qty: 1, max_qty: 1, rate: 0.3 }
+
+# --- Copper Hollow (cave, level 12+) ----------------------------------------
+- id: 6
+  name: Cave Lurker
+  max_hp: 28
+  prowess: 8
+  fortitude: 6
+  aggro_range: 4
+  respawn_ticks: 30
+  attack_ticks: 4
+  archetype: lurker
+  examine: Pale, many-jointed, and very patient.
+  loot_table:
+    - { item_id: 1, min_qty: 5, max_qty: 10, rate: 0.9 }
+    - { item_id: 16, min_qty: 2, max_qty: 4, rate: 0.5 }
+    - { item_id: 17, min_qty: 1, max_qty: 3, rate: 0.4 }
+    - { item_id: 36, min_qty: 1, max_qty: 1, rate: 0.04 }
+    - { item_id: 27, min_qty: 1, max_qty: 1, rate: 0.05 }
+
+# --- Shattered Coast (level 15+) --------------------------------------------
+- id: 7
+  name: Bandit Marksman
+  max_hp: 24
+  prowess: 9
+  fortitude: 4
+  aggro_range: 5
+  respawn_ticks: 30
+  attack_ticks: 4
+  archetype: bandit
+  examine: Watches the shore road from the dunes. Rarely misses.
+  loot_table:
+    - { item_id: 1, min_qty: 6, max_qty: 12, rate: 0.9 }
+    - { item_id: 29, min_qty: 1, max_qty: 1, rate: 0.05 }
+    - { item_id: 38, min_qty: 1, max_qty: 1, rate: 0.04 }
+    - { item_id: 23, min_qty: 1, max_qty: 2, rate: 0.4 }
+
+# --- Wisp Warren (dungeon, level 18+) ---------------------------------------
+- id: 9
+  name: Wisp Matron
+  max_hp: 70
+  prowess: 14
+  fortitude: 8
+  aggro_range: 5
+  footprint_w: 2
+  footprint_h: 2
+  respawn_ticks: 90
+  attack_ticks: 4
+  archetype: wisp
+  examine: The heart of the warren. The hum here is loud enough to feel.
+  loot_table:
+    - { item_id: 47, min_qty: 3, max_qty: 6, rate: 1.0 }
+    - { item_id: 1, min_qty: 15, max_qty: 30, rate: 1.0 }
+    - { item_id: 42, min_qty: 1, max_qty: 1, rate: 0.05 }
+    - { item_id: 39, min_qty: 1, max_qty: 1, rate: 0.08 }
+
+# --- Bandit Ridge (mountaintop, level 25+) ----------------------------------
+- id: 11
+  name: Frost Stalker
+  max_hp: 36
+  prowess: 11
+  fortitude: 8
+  aggro_range: 4
+  respawn_ticks: 35
+  attack_ticks: 3
+  archetype: beast
+  examine: White-furred and silent on the snow.
+  loot_table:
+    - { item_id: 1, min_qty: 8, max_qty: 15, rate: 0.9 }
+    - { item_id: 20, min_qty: 1, max_qty: 1, rate: 0.1 }
+    - { item_id: 37, min_qty: 1, max_qty: 1, rate: 0.04 }
+    - { item_id: 24, min_qty: 1, max_qty: 1, rate: 0.3 }
+- id: 8
+  name: Ridge Brute
+  max_hp: 45
+  prowess: 12
+  fortitude: 10
+  aggro_range: 3
+  footprint_w: 2
+  footprint_h: 2
+  respawn_ticks: 40
+  attack_ticks: 5
+  archetype: brute
+  examine: A bandit who kept growing. Carries a door as a shield.
+  loot_table:
+    - { item_id: 1, min_qty: 10, max_qty: 20, rate: 0.9 }
+    - { item_id: 20, min_qty: 1, max_qty: 2, rate: 0.25 }
+    - { item_id: 39, min_qty: 1, max_qty: 1, rate: 0.06 }
+    - { item_id: 40, min_qty: 1, max_qty: 1, rate: 0.03 }
+- id: 10
+  name: Ridge Warlord
+  max_hp: 130
+  prowess: 20
+  fortitude: 15
+  aggro_range: 5
+  footprint_w: 2
+  footprint_h: 2
+  respawn_ticks: 200
+  attack_ticks: 5
+  archetype: warlord
+  examine: Rules the ridge camps from the summit. Wears an iron crown.
+  loot_table:
+    - { item_id: 49, min_qty: 1, max_qty: 1, rate: 1.0 }
+    - { item_id: 1, min_qty: 40, max_qty: 80, rate: 1.0 }
+    - { item_id: 30, min_qty: 1, max_qty: 1, rate: 0.2 }
+    - { item_id: 41, min_qty: 1, max_qty: 1, rate: 0.1 }
+    - { item_id: 43, min_qty: 1, max_qty: 1, rate: 0.1 }

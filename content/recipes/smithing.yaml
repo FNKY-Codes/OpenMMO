@@ -1,0 +1,207 @@
+# Furnace: ore -> ingot.  Anvil: ingot -> gear.  Levels are Fabrication.
+
+# --- Furnace ----------------------------------------------------------------
+- id: ore_to_ingot
+  name: Bronze Ingot
+  fabrication_level: 1
+  fabrication_xp: 35
+  inputs: [{ item_id: 4, quantity: 1 }]
+  output: 5
+  output_qty: 1
+  ticks: 4
+  station: furnace
+- id: iron_ingot
+  name: Iron Ingot
+  fabrication_level: 15
+  fabrication_xp: 75
+  inputs: [{ item_id: 16, quantity: 1 }]
+  output: 19
+  output_qty: 1
+  ticks: 5
+  station: furnace
+- id: steel_ingot
+  name: Steel Ingot
+  fabrication_level: 25
+  fabrication_xp: 120
+  inputs: [{ item_id: 16, quantity: 1 }, { item_id: 17, quantity: 1 }]
+  output: 20
+  output_qty: 1
+  ticks: 6
+  station: furnace
+
+# --- Anvil: bronze ----------------------------------------------------------
+- id: bronze_helm
+  name: Bronze Helm
+  fabrication_level: 3
+  fabrication_xp: 40
+  inputs: [{ item_id: 5, quantity: 1 }]
+  output: 32
+  output_qty: 1
+  ticks: 4
+  station: anvil
+- id: bronze_axe
+  name: Bronze Axe
+  fabrication_level: 4
+  fabrication_xp: 45
+  inputs: [{ item_id: 5, quantity: 1 }, { item_id: 3, quantity: 1 }]
+  output: 25
+  output_qty: 1
+  ticks: 4
+  station: anvil
+- id: bronze_pick
+  name: Bronze Pick
+  fabrication_level: 4
+  fabrication_xp: 45
+  inputs: [{ item_id: 5, quantity: 1 }, { item_id: 3, quantity: 1 }]
+  output: 27
+  output_qty: 1
+  ticks: 4
+  station: anvil
+- id: bronze_blade
+  name: Bronze Blade
+  fabrication_level: 5
+  fabrication_xp: 60
+  inputs: [{ item_id: 5, quantity: 2 }]
+  output: 8
+  output_qty: 1
+  ticks: 5
+  station: anvil
+- id: bronze_legs
+  name: Bronze Legs
+  fabrication_level: 6
+  fabrication_xp: 65
+  inputs: [{ item_id: 5, quantity: 2 }]
+  output: 34
+  output_qty: 1
+  ticks: 5
+  station: anvil
+- id: bronze_shield
+  name: Bronze Shield
+  fabrication_level: 8
+  fabrication_xp: 70
+  inputs: [{ item_id: 5, quantity: 2 }]
+  output: 35
+  output_qty: 1
+  ticks: 5
+  station: anvil
+- id: bronze_plate
+  name: Bronze Plate
+  fabrication_level: 10
+  fabrication_xp: 100
+  inputs: [{ item_id: 5, quantity: 3 }]
+  output: 33
+  output_qty: 1
+  ticks: 6
+  station: anvil
+
+# --- Anvil: iron ------------------------------------------------------------
+- id: iron_helm
+  name: Iron Helm
+  fabrication_level: 13
+  fabrication_xp: 90
+  inputs: [{ item_id: 19, quantity: 1 }]
+  output: 36
+  output_qty: 1
+  ticks: 5
+  station: anvil
+- id: iron_axe
+  name: Iron Axe
+  fabrication_level: 14
+  fabrication_xp: 95
+  inputs: [{ item_id: 19, quantity: 1 }, { item_id: 14, quantity: 1 }]
+  output: 26
+  output_qty: 1
+  ticks: 5
+  station: anvil
+- id: iron_pick
+  name: Iron Pick
+  fabrication_level: 14
+  fabrication_xp: 95
+  inputs: [{ item_id: 19, quantity: 1 }, { item_id: 14, quantity: 1 }]
+  output: 28
+  output_qty: 1
+  ticks: 5
+  station: anvil
+- id: iron_blade
+  name: Iron Blade
+  fabrication_level: 15
+  fabrication_xp: 130
+  inputs: [{ item_id: 19, quantity: 2 }]
+  output: 29
+  output_qty: 1
+  ticks: 6
+  station: anvil
+- id: iron_legs
+  name: Iron Legs
+  fabrication_level: 16
+  fabrication_xp: 140
+  inputs: [{ item_id: 19, quantity: 2 }]
+  output: 38
+  output_qty: 1
+  ticks: 6
+  station: anvil
+- id: iron_shield
+  name: Iron Shield
+  fabrication_level: 18
+  fabrication_xp: 150
+  inputs: [{ item_id: 19, quantity: 2 }]
+  output: 39
+  output_qty: 1
+  ticks: 6
+  station: anvil
+- id: iron_plate
+  name: Iron Plate
+  fabrication_level: 20
+  fabrication_xp: 210
+  inputs: [{ item_id: 19, quantity: 3 }]
+  output: 37
+  output_qty: 1
+  ticks: 7
+  station: anvil
+
+# --- Anvil: steel -----------------------------------------------------------
+- id: steel_helm
+  name: Steel Helm
+  fabrication_level: 23
+  fabrication_xp: 190
+  inputs: [{ item_id: 20, quantity: 1 }]
+  output: 40
+  output_qty: 1
+  ticks: 6
+  station: anvil
+- id: steel_blade
+  name: Steel Blade
+  fabrication_level: 25
+  fabrication_xp: 280
+  inputs: [{ item_id: 20, quantity: 2 }]
+  output: 30
+  output_qty: 1
+  ticks: 7
+  station: anvil
+- id: steel_legs
+  name: Steel Legs
+  fabrication_level: 26
+  fabrication_xp: 300
+  inputs: [{ item_id: 20, quantity: 2 }]
+  output: 42
+  output_qty: 1
+  ticks: 7
+  station: anvil
+- id: steel_shield
+  name: Steel Shield
+  fabrication_level: 28
+  fabrication_xp: 320
+  inputs: [{ item_id: 20, quantity: 2 }]
+  output: 43
+  output_qty: 1
+  ticks: 7
+  station: anvil
+- id: steel_plate
+  name: Steel Plate
+  fabrication_level: 30
+  fabrication_xp: 450
+  inputs: [{ item_id: 20, quantity: 3 }]
+  output: 41
+  output_qty: 1
+  ticks: 8
+  station: anvil

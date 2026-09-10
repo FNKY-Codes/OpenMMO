@@ -1,0 +1,86 @@
+# Workbench: timber -> planks, scrap -> starter gear.  Cookfire: fish.
+
+# --- Workbench --------------------------------------------------------------
+- id: timber_to_plank
+  name: Birch Plank
+  fabrication_level: 1
+  fabrication_xp: 30
+  inputs: [{ item_id: 2, quantity: 1 }]
+  output: 3
+  output_qty: 1
+  ticks: 3
+  station: workbench
+- id: scrap_club
+  name: Scrap Club
+  fabrication_level: 1
+  fabrication_xp: 15
+  inputs: [{ item_id: 1, quantity: 10 }]
+  output: 31
+  output_qty: 1
+  ticks: 3
+  station: workbench
+- id: scrap_helm
+  name: Scrap Helm
+  fabrication_level: 2
+  fabrication_xp: 20
+  inputs: [{ item_id: 1, quantity: 15 }]
+  output: 44
+  output_qty: 1
+  ticks: 3
+  station: workbench
+- id: scrap_vest
+  name: Scrap Vest
+  fabrication_level: 3
+  fabrication_xp: 30
+  inputs: [{ item_id: 1, quantity: 25 }]
+  output: 45
+  output_qty: 1
+  ticks: 4
+  station: workbench
+- id: oak_plank
+  name: Oak Plank
+  fabrication_level: 15
+  fabrication_xp: 65
+  inputs: [{ item_id: 12, quantity: 1 }]
+  output: 14
+  output_qty: 1
+  ticks: 4
+  station: workbench
+- id: ironwood_plank
+  name: Ironwood Plank
+  fabrication_level: 30
+  fabrication_xp: 140
+  inputs: [{ item_id: 13, quantity: 1 }]
+  output: 15
+  output_qty: 1
+  ticks: 5
+  station: workbench
+
+# --- Cookfire ---------------------------------------------------------------
+- id: fish_to_fillet
+  name: Cooked Minnow
+  fabrication_level: 1
+  fabrication_xp: 25
+  inputs: [{ item_id: 6, quantity: 1 }]
+  output: 7
+  output_qty: 1
+  ticks: 2
+  station: cooking
+- id: cook_trout
+  name: Cooked Trout
+  fabrication_level: 15
+  fabrication_xp: 60
+  inputs: [{ item_id: 21, quantity: 1 }]
+  output: 23
+  output_qty: 1
+  ticks: 3
+  station: cooking
+- id: cook_pike
+  name: Cooked Pike
+  fabrication_level: 30
+  fabrication_xp: 120
+  inputs: [{ item_id: 22, quantity: 1 }]
+  output: 24
+  output_qty: 1
+  ticks: 3
+  station: cooking

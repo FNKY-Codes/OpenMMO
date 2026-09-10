@@ -57,6 +57,7 @@ fn main() -> anyhow::Result<()> {
             Default::default()
         }
     };
+    openmmo_engine::entity_bounds::register_object_dims(&content);
     let region = content.regions.first().cloned();
 
     // Must happen before any wss:// connection is attempted.
@@ -78,6 +79,22 @@ fn main() -> anyhow::Result<()> {
     app.net_rx = Some(msg_rx);
     app.ui.connection_url =
         std::env::var("OPENMMO_SERVER_URL").unwrap_or_else(|_| DEFAULT_SERVER_URL.to_string());
+
+    // Dev/test hook: `OPENMMO_AUTOLOGIN=username:character:password` skips
+    // the login form. Never set this for players.
+    if let Ok(spec) = std::env::var("OPENMMO_AUTOLOGIN") {
+        let mut parts = spec.splitn(3, ':');
+        if let (Some(user), Some(character), Some(password)) =
+            (parts.next(), parts.next(), parts.next())
+        {
+            app.ui.username = user.to_string();
+            app.ui.character_name = character.to_string();
+            app.ui.password = password.to_string();
+            app.auto_connect = true;
+        } else {
+            tracing::warn!("OPENMMO_AUTOLOGIN must be user:character:password; ignoring");
+        }
+    }
 
     app.run()
 }

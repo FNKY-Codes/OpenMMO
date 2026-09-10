@@ -75,8 +75,8 @@ impl GameWorld {
             for y in 0..region.height {
                 for x in 0..region.width {
                     let idx = (y * region.width + x) as usize;
-                    let tile = region.tiles.get(idx).copied().unwrap_or(1);
-                    if tile != 255 {
+                    let tile = region.tiles.get(idx).copied().unwrap_or(255);
+                    if openmmo_common::TileKind::byte_walkable(tile) {
                         let pos = TilePos::new(x as i32, y as i32);
                         region_tiles.insert(pos);
                         self.walkable.insert(pos);
@@ -320,15 +320,18 @@ impl GameWorld {
             });
         }
         for o in self.objects.values() {
-            if o.depleted || region_id.is_some_and(|r| o.region_id != r) {
+            if region_id.is_some_and(|r| o.region_id != r) {
                 continue;
             }
+            // Depleted nodes stay visible (as stumps / bare rock) so the world
+            // doesn't pop; interactions check `depleted` server-side.
             entities.push(WorldEntity {
                 entity_id: o.entity_id,
                 region_id: o.region_id,
                 kind: EntityKind::Object {
                     object_id: o.object_id,
                     position: o.position,
+                    depleted: o.depleted,
                 },
             });
         }
@@ -480,6 +483,43 @@ pub fn world_channel() -> broadcast::Sender<String> {
 }
 
 #[cfg(test)]
+impl GameWorld {
+    /// Place a station object of `station` on the tile east of `player_id`,
+    /// registering a matching object definition if the content lacks one.
+    /// Bank, market and station-bound recipes require adjacency.
+    pub fn place_station_near(&mut self, player_id: PlayerId, station: openmmo_common::StationTag) {
+        let Some((pos, region_id)) = self
+            .players
+            .get(&player_id)
+            .map(|p| (p.position, p.region_id))
+        else {
+            return;
+        };
+        let object_id = ObjectId(9000 + station as u32);
+        if self.content.object(object_id).is_none() {
+            self.content.objects.push(openmmo_common::ObjectDef {
+                id: object_id,
+                name: format!("Test {station:?}"),
+                station: Some(station),
+                ..Default::default()
+            });
+        }
+        let eid = self.alloc_entity();
+        self.objects.insert(
+            eid,
+            ObjectState {
+                entity_id: eid,
+                object_id,
+                position: TilePos::new(pos.x + 1, pos.y),
+                depleted: false,
+                respawn_ticks: 0,
+                region_id,
+            },
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use openmmo_common::{ContentPack, RegionDef, RegionTransition, TilePos};
@@ -497,6 +537,7 @@ mod tests {
             objects: vec![],
             npcs: vec![],
             transitions: vec![],
+            ..Default::default()
         }];
         let mut world = GameWorld::new(pack);
         let first = world.add_player("Alice".into());
@@ -524,7 +565,9 @@ mod tests {
                     position: TilePos::new(4, 2),
                     target_region: RegionId(2),
                     target_spawn: TilePos::new(1, 1),
+                    ..Default::default()
                 }],
+                ..Default::default()
             },
             RegionDef {
                 id: RegionId(2),
@@ -536,6 +579,7 @@ mod tests {
                 objects: vec![],
                 npcs: vec![],
                 transitions: vec![],
+                ..Default::default()
             },
         ];
         let mut world = GameWorld::new(pack);
@@ -564,6 +608,7 @@ mod tests {
                 objects: vec![],
                 npcs: vec![],
                 transitions: vec![],
+                ..Default::default()
             },
             RegionDef {
                 id: RegionId(2),
@@ -578,7 +623,9 @@ mod tests {
                     position: TilePos::new(0, 2),
                     target_region: RegionId(1),
                     target_spawn: TilePos::new(4, 2),
+                    ..Default::default()
                 }],
+                ..Default::default()
             },
         ];
         let mut world = GameWorld::new(pack);

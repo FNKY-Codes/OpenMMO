@@ -1,0 +1,42 @@
+# Friendly NPCs. aggro_range 0 = never attacks; dialogue id is `npc_<id>`.
+
+- id: 100
+  name: Wasteland Guide
+  max_hp: 10
+  prowess: 0
+  fortitude: 1
+  aggro_range: 0
+  respawn_ticks: 0
+  loot_table: []
+  archetype: guide
+  examine: Grey-bearded and unhurried. Knows every path in the Reach.
+- id: 101
+  name: Marla the Trader
+  max_hp: 10
+  prowess: 0
+  fortitude: 1
+  aggro_range: 0
+  respawn_ticks: 0
+  loot_table: []
+  archetype: trader
+  examine: Runs the general store. Will buy almost anything.
+- id: 102
+  name: Grist the Smith
+  max_hp: 10
+  prowess: 0
+  fortitude: 1
+  aggro_range: 0
+  respawn_ticks: 0
+  loot_table: []
+  archetype: smith
+  examine: Soot to the elbows. Sells bronze; will talk iron if you bring it.
+- id: 103
+  name: Old Wen
+  max_hp: 10
+  prowess: 0
+  fortitude: 1
+  aggro_range: 0
+  respawn_ticks: 0
+  loot_table: []
+  archetype: fisher
+  examine: Has fished the still pools since before the fall.

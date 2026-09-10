@@ -165,11 +165,101 @@ pub fn lint_regions(pack: &ContentPack) -> Vec<String> {
                         "Region {} transition spawn {:?} is out of bounds in target region {}",
                         region.name, transition.target_spawn, target.name
                     ));
+                } else if !target.is_walkable(transition.target_spawn) {
+                    errors.push(format!(
+                        "Region {} transition spawn {:?} is on a blocked tile in target region {}",
+                        region.name, transition.target_spawn, target.name
+                    ));
                 }
             }
         }
     }
 
+    for region in &pack.regions {
+        errors.extend(lint_reachability(region));
+    }
+
+    // Every station a recipe needs must exist somewhere in the world.
+    let placed_stations: HashSet<crate::StationTag> = pack
+        .regions
+        .iter()
+        .flat_map(|r| r.objects.iter())
+        .filter_map(|o| pack.object(o.object_id).and_then(|d| d.station))
+        .collect();
+    for recipe in &pack.recipes {
+        if let Some(station) = recipe.station {
+            if !placed_stations.contains(&station) {
+                errors.push(format!(
+                    "Recipe {} needs a {:?} station but none is placed in any region",
+                    recipe.id, station
+                ));
+            }
+        }
+    }
+
+    errors
+}
+
+/// Flood-fill from the spawn over walkable tiles (8-directional, matching
+/// movement) and report anything a player could never reach: NPC spawns,
+/// transitions, and objects with no adjacent reachable tile.
+fn lint_reachability(region: &RegionDef) -> Vec<String> {
+    let mut errors = Vec::new();
+    if region.width == 0 || region.height == 0 || !region.is_walkable(region.spawn) {
+        return errors;
+    }
+    let w = region.width as i32;
+    let h = region.height as i32;
+    let mut seen = vec![false; (w * h) as usize];
+    let idx = |p: TilePos| (p.y * w + p.x) as usize;
+    let mut stack = vec![region.spawn];
+    seen[idx(region.spawn)] = true;
+    while let Some(p) = stack.pop() {
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let n = TilePos::new(p.x + dx, p.y + dy);
+                if n.x < 0 || n.y < 0 || n.x >= w || n.y >= h {
+                    continue;
+                }
+                if !seen[idx(n)] && region.is_walkable(n) {
+                    seen[idx(n)] = true;
+                    stack.push(n);
+                }
+            }
+        }
+    }
+    let reachable = |p: TilePos| p.x >= 0 && p.y >= 0 && p.x < w && p.y < h && seen[idx(p)];
+    let adjacent_reachable = |p: TilePos| {
+        (-1..=1).any(|dy| (-1..=1).any(|dx| reachable(TilePos::new(p.x + dx, p.y + dy))))
+    };
+
+    for npc in &region.npcs {
+        if in_bounds(&npc.position, region) && !reachable(npc.position) {
+            errors.push(format!(
+                "Region {} NPC {} at ({},{}) is unreachable from spawn",
+                region.name, npc.npc_id.0, npc.position.x, npc.position.y
+            ));
+        }
+    }
+    for obj in &region.objects {
+        if in_bounds(&obj.position, region) && !adjacent_reachable(obj.position) {
+            errors.push(format!(
+                "Region {} object {} at ({},{}) has no reachable neighbour",
+                region.name, obj.object_id.0, obj.position.x, obj.position.y
+            ));
+        }
+    }
+    for t in &region.transitions {
+        if in_bounds(&t.position, region) && !reachable(t.position) {
+            errors.push(format!(
+                "Region {} transition at ({},{}) is unreachable from spawn",
+                region.name, t.position.x, t.position.y
+            ));
+        }
+    }
     errors
 }
 
@@ -200,12 +290,34 @@ fn lint_region(region: &RegionDef) -> Vec<String> {
             "Region {} spawn {:?} is out of bounds ({}x{})",
             region.name, region.spawn, region.width, region.height
         ));
+    } else if !region.is_walkable(region.spawn) {
+        errors.push(format!(
+            "Region {} spawn {:?} is not on a walkable tile",
+            region.name, region.spawn
+        ));
+    }
+
+    if let Some((idx, byte)) = region
+        .tiles
+        .iter()
+        .enumerate()
+        .find(|(_, b)| crate::TileKind::from_byte(**b).is_none())
+    {
+        errors.push(format!(
+            "Region {} has unknown tile byte {} at index {}",
+            region.name, byte, idx
+        ));
     }
 
     for npc in &region.npcs {
         if !in_bounds(&npc.position, region) {
             errors.push(format!(
                 "Region {} NPC {} at {:?} is out of bounds",
+                region.name, npc.npc_id.0, npc.position
+            ));
+        } else if !region.is_walkable(npc.position) {
+            errors.push(format!(
+                "Region {} NPC {} at {:?} is on a blocked tile",
                 region.name, npc.npc_id.0, npc.position
             ));
         }
@@ -218,6 +330,22 @@ fn lint_region(region: &RegionDef) -> Vec<String> {
                 region.name, obj.object_id.0, obj.position
             ));
         }
+    }
+
+    for t in &region.transitions {
+        if in_bounds(&t.position, region) && !region.is_walkable(t.position) {
+            errors.push(format!(
+                "Region {} transition at {:?} is on a blocked tile (players can't reach it)",
+                region.name, t.position
+            ));
+        }
+    }
+
+    if !region.layout.is_empty() {
+        errors.push(format!(
+            "Region {} still has an unexpanded layout (call expand_layout)",
+            region.name
+        ));
     }
 
     errors
@@ -244,6 +372,7 @@ mod tests {
             objects: vec![],
             npcs: vec![],
             transitions: vec![],
+            ..Default::default()
         };
         let errors = lint_region(&region);
         assert!(errors.iter().any(|e| e.contains("tile count mismatch")));
@@ -261,6 +390,7 @@ mod tests {
             objects: vec![],
             npcs: vec![],
             transitions: vec![],
+            ..Default::default()
         };
         let errors = lint_region(&region);
         assert!(errors.iter().any(|e| e.contains("spawn")));
@@ -281,6 +411,7 @@ mod tests {
                 position: TilePos::new(10, 0),
             }],
             transitions: vec![],
+            ..Default::default()
         };
         let errors = lint_region(&region);
         assert!(errors.iter().any(|e| e.contains("NPC")));

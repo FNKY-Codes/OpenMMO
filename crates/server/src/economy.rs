@@ -60,6 +60,11 @@ pub fn handle_market_offer(
     price_per: u32,
     is_buy: bool,
 ) -> Vec<ServerMessage> {
+    if !crate::tick::near_station(world, player_id, openmmo_common::StationTag::Market) {
+        return vec![ServerMessage::Error {
+            message: "You need to be at a trade board to post offers.".into(),
+        }];
+    }
     let name = world
         .players
         .get(&player_id)
@@ -637,6 +642,9 @@ mod tests {
         });
         world.players.insert(buyer_id, buyer);
         world.players.insert(seller_id, seller);
+        // Offers can only be posted at a trade board.
+        world.place_station_near(seller_id, openmmo_common::StationTag::Market);
+        world.place_station_near(buyer_id, openmmo_common::StationTag::Market);
 
         let msgs = handle_market_offer(&mut world, seller_id, ItemId(2), 5, 15, false);
         assert!(!msgs.is_empty());

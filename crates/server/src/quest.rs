@@ -465,8 +465,8 @@ mod tests {
             entity_id,
             NpcState {
                 entity_id,
-                npc_id: NpcId(100),
-                name: "Guide".into(),
+                npc_id: NpcId(102),
+                name: "Grist the Smith".into(),
                 position: TilePos::new(0, 0),
                 home_position: TilePos::new(0, 0),
                 hp: 10,
@@ -480,10 +480,11 @@ mod tests {
                 region_id: RegionId(1),
             },
         );
-        let msgs = handle_dialogue_select(&mut world, pid, entity_id, "npc_100_callings", 0);
+        // `npc_102_howto` is one level below Grist's entry node.
+        let msgs = handle_dialogue_select(&mut world, pid, entity_id, "npc_102_howto", 0);
         assert!(msgs.iter().any(|m| matches!(
             m,
-            ServerMessage::ShopOpen { shop_id, .. } if shop_id == "starter_supplies"
+            ServerMessage::ShopOpen { shop_id, .. } if shop_id == "smithy"
         )));
     }
 }

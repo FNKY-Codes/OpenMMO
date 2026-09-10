@@ -1,0 +1,11 @@
+# Items every new character starts with.
+- item_id: 31   # Scrap Club
+  quantity: 1
+- item_id: 9    # Training Axe
+  quantity: 1
+- item_id: 10   # Stone Pick
+  quantity: 1
+- item_id: 7    # Cooked Minnow
+  quantity: 5
+- item_id: 1    # Scrap
+  quantity: 30

@@ -310,6 +310,7 @@ fn login_failure(message: &str) -> ServerMessage {
         success: false,
         player_id: None,
         message: message.to_string(),
+        content_fingerprint: String::new(),
     }
 }
 
@@ -437,20 +438,21 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     .get(&pid)
                     .is_some_and(|p| p.inventory.slots.iter().all(|s| s.is_none()))
                 {
+                    // Fresh character: hand out the content pack's starter kit.
                     let starter_items: Vec<_> = world
                         .content
-                        .items
+                        .starter_kit
                         .iter()
-                        .filter(|item| {
-                            item.name.contains("Bronze")
-                                || item.name.contains("Log")
-                                || item.name.contains("Timber")
+                        .filter_map(|entry| {
+                            world
+                                .content
+                                .item(entry.item_id)
+                                .map(|item| (item.id, entry.quantity, item.stackable))
                         })
-                        .map(|item| (item.id, item.stackable))
                         .collect();
                     if let Some(player) = world.players.get_mut(&pid) {
-                        for (id, stackable) in starter_items {
-                            let _ = player.inventory.add_item(id, 5, stackable);
+                        for (id, quantity, stackable) in starter_items {
+                            let _ = player.inventory.add_item(id, quantity, stackable);
                         }
                     }
                 }
@@ -460,6 +462,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 let snapshot = snapshot_message(&world, Some(pid));
                 let journal = quest_journal(&world, pid);
                 let inv = world.players.get(&pid).map(inventory_update);
+                let content_fingerprint = world.content.fingerprint();
                 drop(world);
 
                 player_id = Some(pid);
@@ -487,6 +490,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         success: true,
                         player_id: Some(pid),
                         message: "Welcome to OpenMMO".into(),
+                        content_fingerprint,
                     },
                 );
                 send_json(&conn_tx, &ServerMessage::QuestJournal { entries: journal });

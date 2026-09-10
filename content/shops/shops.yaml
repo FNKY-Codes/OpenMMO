@@ -1,0 +1,25 @@
+# Shops. Prices are in Scrap (item 1).
+
+- id: general_store
+  name: Marla's General Store
+  restock_ticks: 100
+  stock:
+    - { item_id: 9, price: 20, quantity: 10 }    # Training Axe
+    - { item_id: 10, price: 20, quantity: 10 }   # Stone Pick
+    - { item_id: 11, price: 25, quantity: 10 }   # Fishing Rod
+    - { item_id: 31, price: 15, quantity: 10 }   # Scrap Club
+    - { item_id: 7, price: 8, quantity: 30 }     # Cooked Minnow
+    - { item_id: 44, price: 20, quantity: 5 }    # Scrap Helm
+    - { item_id: 45, price: 40, quantity: 5 }    # Scrap Vest
+
+- id: smithy
+  name: Grist's Smithy
+  restock_ticks: 150
+  stock:
+    - { item_id: 8, price: 120, quantity: 5 }    # Bronze Blade
+    - { item_id: 32, price: 80, quantity: 5 }    # Bronze Helm
+    - { item_id: 34, price: 130, quantity: 5 }   # Bronze Legs
+    - { item_id: 35, price: 110, quantity: 5 }   # Bronze Shield
+    - { item_id: 33, price: 220, quantity: 3 }   # Bronze Plate
+    - { item_id: 25, price: 150, quantity: 5 }   # Bronze Axe
+    - { item_id: 27, price: 150, quantity: 5 }   # Bronze Pick
