@@ -526,5 +526,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         world.remove_player(pid);
     }
     state.unregister_connection(conn_id).await;
-    send_task.abort();
+    // Every clone of `conn_tx` has now been dropped from the registries, so
+    // dropping ours closes the channel; the send task drains anything still
+    // queued (e.g. the eviction notice) and sends a close frame.
+    drop(conn_tx);
+    let _ = tokio::time::timeout(Duration::from_secs(5), send_task).await;
 }

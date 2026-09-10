@@ -2541,6 +2541,9 @@ mod routing_tests {
             world.find_player_spawn(region_id, TilePos::new(npc_pos.x + 10, npc_pos.y + 10));
         player.last_position = player.position;
         world.players.insert(pid, player);
+        // Isolate the routing under test: other hostiles would aggro the player
+        // on the way and switch its action to Combat with a different target.
+        world.npcs.retain(|eid, _| *eid == entity_id);
 
         let msgs = handle_client_message(
             &mut world,
@@ -2564,24 +2567,24 @@ mod routing_tests {
         assert_eq!(*attack_target, Some(entity_id));
         assert_eq!(*attack_style, Some(openmmo_common::CombatStyle::Melee));
 
-        let mut reached_combat = false;
+        // A hostile NPC engages as soon as the player enters its aggro range and
+        // then closes in, so the player can be in `Combat` before the two are
+        // adjacent. Require that they end up adjacent and fighting.
+        let mut adjacent_and_fighting = false;
         for _ in 0..50 {
             process_tick(&mut world);
-            if matches!(
-                world.players.get(&pid).unwrap().action,
-                openmmo_common::PlayerAction::Combat { .. }
-            ) {
-                let player = world.players.get(&pid).unwrap();
-                let dist = player
-                    .position
-                    .chebyshev_distance(&world.npcs.get(&entity_id).unwrap().position);
-                assert!(dist <= 1);
-                reached_combat = true;
+            let player = world.players.get(&pid).unwrap();
+            let in_combat = matches!(player.action, openmmo_common::PlayerAction::Combat { .. });
+            let dist = player
+                .position
+                .chebyshev_distance(&world.npcs.get(&entity_id).unwrap().position);
+            if in_combat && dist <= 1 {
+                adjacent_and_fighting = true;
                 break;
             }
         }
         assert!(
-            reached_combat,
+            adjacent_and_fighting,
             "player should reach attack range and enter combat"
         );
     }
@@ -2621,6 +2624,8 @@ mod routing_tests {
         );
         player.last_position = player.position;
         world.players.insert(pid, player);
+        // No hostiles: an aggro on the way would interrupt the scavenge walk.
+        world.npcs.clear();
 
         let msgs = handle_client_message(
             &mut world,
