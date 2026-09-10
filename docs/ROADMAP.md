@@ -23,6 +23,15 @@ See [architecture.md](architecture.md) for component layout and data flow.
 | Phase 4 — Hardening | Anti-cheat, auth, persistence, docs | **Partial** — auth/redis added; postgres opt-in |
 | Phase 5 — Tooling | Atlas pipeline, WASM, plugins, editor | **Partial** — stubs expanded |
 
+## World v1 (2026-09-10, branch `world-v1`)
+
+- **Map format:** regions are ASCII `layout` + `legend` (see `crates/sdk/src/tiles.rs`), generated from hand-placed districts by `tools/worldgen/build_maps.py`. 16 `TileKind`s with shared walkability; a reachability lint.
+- **World:** Verdant Reach hub (80×80: walled town with bank/shops/stations, birch woods, copper ridge, pools, ruins, bandit camps) + Copper Hollow cave, Wisp Warren dungeon, Bandit Ridge mountaintop, Shattered Coast — linked by cave mouths, an iron door, stairs and a road.
+- **Content:** coherent item ids; scrap/bronze/iron/steel gear, 3 tiers of timber/ore/fish, food that heals; 11 hostile NPC types up to the Ridge Warlord; town NPCs with dialogue; two shops; stations (bank chest, furnace, anvil, workbench, cookfire, trade board) that gate the matching actions.
+- **Rendering:** tile palette, procedural props, portals, NPC bodies by archetype, dim caves.
+- **UI:** RuneScape-classic layout — minimap + HP orb, icon-tabbed side panel, grid inventory with procedural icons, chat tabs, hover text, bank/shop/crafting/trade-board/dialogue windows.
+- **Server:** shop selling, eating, equip level requirements, station proximity, per-node respawn.
+
 ## Recent fixes (2026-09-10)
 
 - **Deployment:** server on Railway (`wss://server-production-2a39.up.railway.app/ws`), Dockerfile, Windows client releases on `v*` tags
@@ -130,10 +139,12 @@ Required before public self-hosting or multi-shard deployment.
 | ID | Item | Status | Key files |
 |----|------|--------|-----------|
 | C1 | Outlands skills (Wrangling, Ranching, Engineering) | Open | `content/skills/`, `crates/server/src/state.rs` |
-| C2 | Fishing skill loop | Open | `content/items/fishing_rod.yaml`, `content/objects/` |
+| C2 | Fishing skill loop | **Complete** — 3 tiers of pools, rods, cookfires | `content/objects/nodes.yaml`, `content/recipes/` |
 | C3 | Clan system (create/join/leave) | Open | `crates/server/src/social.rs`, protocol |
 | C4 | Minigame & ledger depth | Open | `crates/server/src/minigame.rs` |
-| C5 | Additional regions & quest chains | Open | `content/regions/`, `content/quests/` |
+| C5 | Additional regions & quest chains | **Regions complete** (5); quest chain still one quest | `content/regions/`, `content/quests/` |
+| C6 | Quest chain through every district (talk → chop → smelt → fish → cave → coast) | Open | `content/quests/` |
+| C7 | Death mechanics (drop-on-death vs. keep), gravestones | Open | `crates/server/src/tick.rs` |
 
 **Depends on:** C1 and C5 after A3; C3 after A1 + B1
 
